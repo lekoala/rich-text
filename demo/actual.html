@@ -66,8 +66,9 @@
     .actual-rich-text .rt-shell {
       transition: border-color var(--duration), background-color var(--duration), color var(--duration);
     }
+    /* Hover recolours the frame only (--rt-border), never --control-border: the dividers derive from it. */
     .actual-rich-text .rt-shell:hover:not([data-disabled], [data-readonly]) {
-      --control-border: var(--control-hover-border, var(--text-subtle));
+      --rt-border: var(--form-invalid-border, var(--control-hover-border, var(--text-subtle)));
     }
     .actual-rich-text .rt-button { border-radius: var(--radius-sm); font-size: var(--font-size-md); }
 
