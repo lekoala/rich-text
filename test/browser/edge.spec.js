@@ -664,6 +664,41 @@ test.describe("toolbar", () => {
     await expect(page.getByRole("button", { name: "Bold" })).toHaveAttribute("aria-pressed", "true");
   });
 
+  test("hover overlays a pressed button instead of replacing its background", async ({ page }) => {
+    await open(page);
+    await page.evaluate(() => mount({ html: "<p><b>x</b></p>" }));
+    await page.evaluate(() => {
+      const shell = rt.shell;
+      shell.style.setProperty("--rt-button-pressed-bg", "rgb(0, 0, 255)");
+      shell.style.setProperty("--rt-button-pressed-fg", "rgb(255, 255, 255)");
+      shell.style.setProperty("--rt-button-hover", "rgba(0, 0, 0, 0.25)");
+      const text = rt.surface.querySelector("b").firstChild;
+      const range = document.createRange();
+      range.setStart(text, 1);
+      rt.squire.focus();
+      rt.squire.setSelection(range);
+    });
+    const bold = page.getByRole("button", { name: "Bold" });
+    const italic = page.getByRole("button", { name: "Italic" });
+    await expect(bold).toHaveAttribute("aria-pressed", "true");
+    const style = (locator) =>
+      locator.evaluate((button) => {
+        const { backgroundColor, color, boxShadow } = getComputedStyle(button);
+        return { backgroundColor, color, boxShadow };
+      });
+
+    await bold.hover();
+    const pressed = await style(bold);
+    expect(pressed.backgroundColor).toBe("rgb(0, 0, 255)");
+    expect(pressed.color).toBe("rgb(255, 255, 255)");
+    expect(pressed.boxShadow).toContain("rgba(0, 0, 0, 0.25)");
+
+    // The overlay follows the pointer; a plain button still gets it too.
+    await italic.hover();
+    expect((await style(bold)).boxShadow).toBe("none");
+    expect((await style(italic)).boxShadow).toContain("rgba(0, 0, 0, 0.25)");
+  });
+
   test("arrow keys move a single tab stop across groups", async ({ page }) => {
     await open(page);
     await page.evaluate(() => mount({ html: "<p>x</p>" }));
