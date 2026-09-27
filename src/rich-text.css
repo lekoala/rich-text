@@ -6,7 +6,9 @@ rich-text {
 .rt-shell {
   --rt-bg: Canvas;
   --rt-fg: CanvasText;
+  /* The field frame only: a state (invalid, focus) can recolour it without repainting the lines inside. */
   --rt-border: color-mix(in srgb, CanvasText 22%, Canvas);
+  --rt-divider: color-mix(in srgb, CanvasText 22%, Canvas);
   --rt-muted: color-mix(in srgb, CanvasText 60%, Canvas);
   --rt-focus: Highlight;
   --rt-focus-width: 2px;
@@ -22,7 +24,7 @@ rich-text {
   --rt-disabled-bg: var(--rt-toolbar-bg);
   --rt-disabled-fg: var(--rt-muted);
   --rt-link: LinkText;
-  --rt-quote-border: var(--rt-border);
+  --rt-quote-border: var(--rt-divider);
   --rt-mention-bg: color-mix(in srgb, Highlight 16%, Canvas);
   --rt-mention-fg: CanvasText;
   --rt-suggestion-bg: Canvas;
@@ -57,7 +59,7 @@ rich-text {
   align-items: center;
   gap: 0.25rem 0.5rem;
   padding: 0.375rem;
-  border-block-end: 1px solid var(--rt-border);
+  border-block-end: 1px solid var(--rt-divider);
   background: var(--rt-toolbar-bg);
 }
 
@@ -70,9 +72,10 @@ rich-text {
   gap: 0.125rem;
 }
 
-.rt-group + .rt-group {
-  padding-inline-start: 0.5rem;
-  border-inline-start: 1px solid var(--rt-border);
+/* The separator closes a group, so a group that wraps starts its line with buttons, not a divider. */
+.rt-group:has(+ .rt-group) {
+  padding-inline-end: 0.5rem;
+  border-inline-end: 1px solid var(--rt-divider);
 }
 
 .rt-button {
@@ -178,7 +181,7 @@ rich-text {
   overflow: auto;
   margin: 0;
   padding: 0.25rem;
-  border: 1px solid var(--rt-border);
+  border: 1px solid var(--rt-divider);
   border-radius: var(--rt-radius);
   background: var(--rt-suggestion-bg);
   color: var(--rt-fg);

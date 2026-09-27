@@ -699,6 +699,50 @@ test.describe("toolbar", () => {
     expect((await style(italic)).boxShadow).toContain("rgba(0, 0, 0, 0.25)");
   });
 
+  test("--rt-border paints only the field frame, not the inner dividers", async ({ page }) => {
+    await open(page);
+    await page.evaluate(() =>
+      mount({ options: { toolbar: "bold | blockquote" }, html: "<blockquote><p>x</p></blockquote>" }),
+    );
+    await page.evaluate(() => rt.shell.style.setProperty("--rt-border", "rgb(255, 0, 0)"));
+    const colors = await page.evaluate(() => {
+      const css = (element, property) => getComputedStyle(element).getPropertyValue(property);
+      return {
+        frame: css(rt.shell, "border-top-color"),
+        toolbar: css(rt.toolbar, "border-bottom-color"),
+        group: css(rt.toolbar.querySelector(".rt-group"), "border-right-color"),
+        quote: css(rt.surface.querySelector("blockquote"), "border-left-color"),
+        popover: css(rt.suggestionPopup, "border-top-color"),
+      };
+    });
+    expect(colors.frame).toBe("rgb(255, 0, 0)");
+    for (const inner of [colors.toolbar, colors.group, colors.quote, colors.popover]) {
+      expect(inner).not.toBe("rgb(255, 0, 0)");
+    }
+  });
+
+  test("a separator closes its group, so a wrapped line starts with a button", async ({ page }) => {
+    await open(page);
+    await page.evaluate(() =>
+      mount({ options: { toolbar: "bold italic | bullet-list ordered-list | undo redo" } }),
+    );
+    const groups = await page.evaluate(() => {
+      rt.shell.style.inlineSize = "7rem";
+      return [...rt.toolbar.querySelectorAll(".rt-group")].map((group) => {
+        const style = getComputedStyle(group);
+        return {
+          top: Math.round(group.getBoundingClientRect().top),
+          start: style.borderLeftStyle,
+          end: style.borderRightStyle,
+        };
+      });
+    });
+    expect(groups).toHaveLength(3);
+    expect(groups[1].top).toBeGreaterThan(groups[0].top);
+    expect(groups.map((group) => group.start)).toEqual(["none", "none", "none"]);
+    expect(groups.map((group) => group.end)).toEqual(["solid", "solid", "none"]);
+  });
+
   test("arrow keys move a single tab stop across groups", async ({ page }) => {
     await open(page);
     await page.evaluate(() => mount({ html: "<p>x</p>" }));

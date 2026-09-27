@@ -5,6 +5,9 @@
 - Form reset from a real click now resets the editor on the first click (the sync ran before the controls were reset).
 - Hovering a pressed toolbar button overlays `--rt-button-hover` instead of replacing its background, so the pressed
   background and `--rt-button-pressed-fg` stay readable together.
+- Toolbar group separators close a group instead of opening the next one, so a wrapped line starts with buttons.
+- New `--rt-divider` token for the toolbar separators, quote bar and popover border. `--rt-border` now paints only the
+  field frame, so an invalid/state override of it no longer turns the inner lines red.
 
 ## 0.1.0
 

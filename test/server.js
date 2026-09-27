@@ -23,7 +23,11 @@ const IMPORT_MAP = `<script type="importmap">${JSON.stringify({
 
 createServer(async (request, response) => {
   const url = new URL(request.url, `http://${request.headers.host}`);
-  const pathname = url.pathname === "/" ? "/demo/index.html" : url.pathname;
+  // Redirect rather than serve in place, so the demo's relative imports resolve from /demo/.
+  if (url.pathname === "/" || url.pathname === "/demo" || url.pathname === "/demo/") {
+    return response.writeHead(302, { Location: "/demo/index.html" }).end();
+  }
+  const pathname = url.pathname;
   const file = path.resolve(root, `.${pathname}`);
   if (!file.startsWith(root + path.sep)) return response.writeHead(403).end("Forbidden");
 

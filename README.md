@@ -204,7 +204,8 @@ the editor, so the selection survives.
 
 ## Theming
 
-`rich-text.css` is driven by `--rt-*` custom properties (colours, `--rt-focus-width`, `--rt-min-height`,
+`rich-text.css` is driven by `--rt-*` custom properties (colours, `--rt-border` for the field frame and
+`--rt-divider` for the toolbar separators, quote bar and popover border, `--rt-focus-width`, `--rt-min-height`,
 `--rt-max-height`, `--rt-font-size`, button pressed/hover, disabled, link, quote, mention and suggestion tokens).
 The suggestion popover is a child of `.rt-shell` (rendered in the top layer), so it inherits the tokens: a theme
 overrides them once, on `.rt-shell` or any ancestor. This also keeps suggestions clickable inside a modal
@@ -225,6 +226,7 @@ link editor). The core of it:
   --rt-bg: var(--surface);
   --rt-fg: var(--text);
   --rt-border: var(--form-invalid-border, var(--control-border, var(--border)));
+  --rt-divider: var(--control-border, var(--border));
   --rt-muted: var(--text-muted);
   --rt-focus: var(--form-invalid-border, var(--focus));
   --rt-focus-width: var(--focus-ring-width);
