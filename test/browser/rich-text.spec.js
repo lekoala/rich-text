@@ -18,9 +18,39 @@ test("syncs form value and form reset", async ({ page }) => {
   await page.keyboard.type(" updated");
   await expect(page.locator("#note")).toHaveValue(/updated/);
 
+  // A trusted click: the reset happens after the event's microtask checkpoint.
   await page.locator("#reset").click();
+  await expect(page.locator("#note")).not.toHaveValue(/updated/);
   await expect(page.locator("#note")).toHaveValue(/Hello team/);
   await expect(editor).toContainText("Hello team");
+  await expect(editor).not.toContainText("updated");
+});
+
+test("form reset honours a later preventDefault and a replacement made after it", async ({ page }) => {
+  await page.goto("/test/fixtures/basic.html");
+  const editor = page.locator("#basic .rt-editor");
+  await editor.click();
+  await page.keyboard.press("End");
+  await page.keyboard.type(" updated");
+  await expect(page.locator("#note")).toHaveValue(/updated/);
+
+  await page.evaluate(() => {
+    const form = document.querySelector("#note").form;
+    form.addEventListener("reset", (event) => event.preventDefault(), { once: true });
+  });
+  await page.locator("#reset").click();
+  await expect(page.locator("#note")).toHaveValue(/updated/);
+  await expect(editor).toContainText("updated");
+
+  await page.evaluate(() => {
+    const note = document.querySelector("#note");
+    // The fixture's #reset button shadows form.reset.
+    HTMLFormElement.prototype.reset.call(note.form);
+    note.closest("rich-text").richText.setHTML("<p>Replaced</p>");
+  });
+  await page.waitForTimeout(50);
+  await expect(editor).toHaveText("Replaced");
+  await expect(page.locator("#note")).toHaveValue("<p>Replaced</p>");
 });
 
 test("sanitizes initial HTML", async ({ page }) => {

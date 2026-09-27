@@ -96,6 +96,9 @@ export declare class RichText {
     /** @type {HTMLFormElement | null} */
     _form: HTMLFormElement | null;
     _linkRequest: number;
+    /** @type {ReturnType<typeof setTimeout> | undefined} */
+    _resetTimer: ReturnType<typeof setTimeout> | undefined;
+    _resetPending: boolean;
     _disposed: boolean;
     _sourceWasHidden: boolean;
     /** @type {{ label: HTMLLabelElement, id: string }[]} */

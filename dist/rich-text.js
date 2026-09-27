@@ -4743,6 +4743,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       this._fieldsetObserver = null;
       this._form = null;
       this._linkRequest = 0;
+      this._resetTimer = undefined;
+      this._resetPending = false;
       this._disposed = false;
       this._sourceWasHidden = source.hasAttribute("hidden");
       this._generatedLabelIds = [];
@@ -4837,6 +4839,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       if (this._disposed)
         return;
       this._disposed = true;
+      clearTimeout(this._resetTimer);
       this._suggestionAbort?.abort();
       this._stopSuggestionAutoUpdate?.();
       this._controller.abort();
@@ -5036,9 +5039,14 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       this.source.dispatchEvent(new CustomEvent("richtext:invalid", { bubbles: true, detail: { richText: this } }));
     }
     _onFormReset(event) {
-      if (event.defaultPrevented)
-        return;
-      queueMicrotask(() => {
+      clearTimeout(this._resetTimer);
+      this._resetPending = true;
+      this._resetTimer = setTimeout(() => {
+        this._resetPending = false;
+        if (event.defaultPrevented) {
+          this._syncFromEditor(true);
+          return;
+        }
         this.sync();
         this._focusValue = this.source.value;
       });
@@ -5230,6 +5238,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       this._syncToolbarTabStops();
     }
     _setEditorHTML(html) {
+      clearTimeout(this._resetTimer);
+      this._resetPending = false;
       this._linkRequest += 1;
       this._settingEditor = true;
       try {
@@ -5240,7 +5250,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       }
     }
     _syncFromEditor(dispatchInput) {
-      if (this._disposed)
+      if (this._disposed || this._resetPending)
         return;
       const html = isEditorEmpty(this.surface) ? "" : this._serialize();
       const changed = this.source.value !== html;

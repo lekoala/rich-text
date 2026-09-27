@@ -134,6 +134,9 @@ export class RichText {
     /** @type {HTMLFormElement | null} */
     this._form = null;
     this._linkRequest = 0;
+    /** @type {ReturnType<typeof setTimeout> | undefined} */
+    this._resetTimer = undefined;
+    this._resetPending = false;
     this._disposed = false;
     this._sourceWasHidden = source.hasAttribute("hidden");
     /** @type {{ label: HTMLLabelElement, id: string }[]} */
@@ -277,6 +280,7 @@ export class RichText {
   dispose() {
     if (this._disposed) return;
     this._disposed = true;
+    clearTimeout(this._resetTimer);
     this._suggestionAbort?.abort();
     this._stopSuggestionAutoUpdate?.();
     this._controller.abort();
@@ -487,9 +491,17 @@ export class RichText {
 
   /** @param {Event} event */
   _onFormReset(event) {
-    if (event.defaultPrevented) return;
-    // Controls are reset after the event is dispatched.
-    queueMicrotask(() => {
+    // Controls are reset after the event is dispatched. A microtask is too early: on a trusted click the
+    // checkpoint after this listener runs before the reset. A task also sees a later listener's preventDefault.
+    // Until then the editor must not write its stale content over the reset textarea value.
+    clearTimeout(this._resetTimer);
+    this._resetPending = true;
+    this._resetTimer = setTimeout(() => {
+      this._resetPending = false;
+      if (event.defaultPrevented) {
+        this._syncFromEditor(true);
+        return;
+      }
       this.sync();
       this._focusValue = this.source.value;
     });
@@ -694,6 +706,9 @@ export class RichText {
 
   /** @param {string} html */
   _setEditorHTML(html) {
+    // A content replacement made after a reset wins over the pending reset sync.
+    clearTimeout(this._resetTimer);
+    this._resetPending = false;
     this._linkRequest += 1;
     this._settingEditor = true;
     try {
@@ -706,7 +721,7 @@ export class RichText {
 
   /** @param {boolean} dispatchInput */
   _syncFromEditor(dispatchInput) {
-    if (this._disposed) return;
+    if (this._disposed || this._resetPending) return;
     const html = isEditorEmpty(this.surface) ? "" : this._serialize();
     const changed = this.source.value !== html;
     this.source.value = html;
