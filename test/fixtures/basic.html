@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="/src/rich-text.css">
+</head>
+<body>
+  <form id="form">
+    <label for="note">Consultation note</label>
+    <rich-text id="basic">
+      <textarea id="note" name="note" required placeholder="Write a note…"><p>Hello patient</p></textarea>
+    </rich-text>
+    <button id="reset" type="reset">Reset</button>
+  </form>
+
+  <label for="mention-note">Message</label>
+  <rich-text id="mentions">
+    <textarea id="mention-note" name="message" placeholder="Type @ or /"></textarea>
+  </rich-text>
+
+  <label for="unsafe-note">Unsafe</label>
+  <rich-text id="unsafe">
+    <textarea id="unsafe-note" name="unsafe"><p onclick="alert(1)">Safe</p><script>window.XSS=1</script></textarea>
+  </rich-text>
+
+  <script type="module">
+    import { defineRichText } from "/src/index.js";
+
+    const people = [
+      { id: "p1", name: "Dr Martin" },
+      { id: "p2", name: "Dr Martens" },
+    ];
+    const templates = [
+      { id: "followup", label: "Follow-up", html: "<p><b>Follow-up:</b> return in 3 months.</p>" },
+    ];
+
+    document.querySelector("#mentions").options = {
+      suggestions: [
+        {
+          trigger: "@",
+          kind: "mention",
+          mentionType: "practitioner",
+          search(query) {
+            return people.filter((item) => item.name.toLowerCase().includes(query.toLowerCase()));
+          },
+          getId: (item) => item.id,
+          getLabel: (item) => item.name,
+        },
+        {
+          trigger: "/",
+          search(query) {
+            return templates.filter((item) => item.label.toLowerCase().includes(query.toLowerCase()));
+          },
+          getLabel: (item) => item.label,
+          insert(item) {
+            return { type: "html", html: item.html };
+          },
+        },
+      ],
+    };
+
+    defineRichText();
+  </script>
+</body>
+</html>

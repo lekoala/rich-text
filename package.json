@@ -1,0 +1,90 @@
+{
+  "name": "@lekoala/rich-text",
+  "version": "0.0.1",
+  "description": "Opinionated, progressive rich-text editor built on Squire",
+  "type": "module",
+  "sideEffects": [
+    "./src/define.js",
+    "./src/rich-text.css",
+    "./dist/rich-text.js",
+    "./dist/rich-text.min.js",
+    "./dist/rich-text.standalone.min.js",
+    "./dist/rich-text.css",
+    "./dist/rich-text.min.css"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lekoala/rich-text.git"
+  },
+  "homepage": "https://github.com/lekoala/rich-text",
+  "bugs": "https://github.com/lekoala/rich-text/issues",
+  "packageManager": "bun@1.4.2",
+  "keywords": [
+    "rich-text",
+    "wysiwyg",
+    "squire",
+    "editor",
+    "mentions",
+    "web-component"
+  ],
+  "files": [
+    "dist",
+    "src",
+    "LICENSE",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./src/index.js"
+    },
+    "./define": {
+      "types": "./dist/types/define.d.ts",
+      "import": "./src/define.js"
+    },
+    "./rich-text.css": "./src/rich-text.css",
+    "./standalone": "./dist/rich-text.standalone.min.js",
+    "./dist/rich-text.js": "./dist/rich-text.js",
+    "./dist/rich-text.min.js": "./dist/rich-text.min.js",
+    "./dist/rich-text.standalone.min.js": "./dist/rich-text.standalone.min.js",
+    "./dist/rich-text.css": "./dist/rich-text.css",
+    "./dist/rich-text.min.css": "./dist/rich-text.min.css"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "dev": "node test/server.js",
+    "build:bundle": "bun scripts/build.js",
+    "build:types": "tsc -p tsconfig.types.json",
+    "build": "bun run build:bundle && bun run build:types",
+    "sync": "bun run build",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "typecheck": "tsc -p jsconfig.json",
+    "types": "tsc -p tsconfig.types.json",
+    "test": "bun test test/unit",
+    "test:syntax": "node --check src/helpers.js && node --check src/sanitize.js && node --check src/rich-text.js && node --check src/rich-text-element.js && node --check src/index.js && node --check src/define.js",
+    "test:types": "tsc -p test/types/tsconfig.json",
+    "test:browser": "playwright test test/browser --project chromium",
+    "test:browser:all": "playwright test test/browser",
+    "test:dist": "playwright test test/dist --project chromium",
+    "check": "bun run test:syntax && bun run lint && bun run typecheck && bun run test",
+    "check:package": "bun scripts/check-package.js",
+    "verify": "bun run check && bun run sync && bun run test:types && bun run check:package",
+    "check:all": "bun run verify && bun run test:browser:all && bun run test:dist",
+    "prepack": "bun run sync",
+    "prepublishOnly": "bun run verify"
+  },
+  "dependencies": {
+    "@lekoala/floating": "^0.2.0",
+    "dompurify": "^3.2",
+    "squire-rte": "^2.4"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5",
+    "@playwright/test": "1.63.0",
+    "typescript": "^7"
+  }
+}

@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>@lekoala/rich-text prototype</title>
+  <link rel="stylesheet" href="../src/rich-text.css">
+  <style>
+    body { max-width: 52rem; margin: 3rem auto; padding: 0 1rem; font: 16px/1.5 system-ui, sans-serif; }
+    label { display: block; margin-block-end: .5rem; font-weight: 650; }
+    .hint { color: #666; }
+  </style>
+</head>
+<body>
+  <h1>@lekoala/rich-text</h1>
+  <p class="hint">Opinionated Squire wrapper. Try <code>@mar</code> or <code>/fol</code>.</p>
+
+  <label for="note">Consultation note</label>
+  <rich-text id="editor">
+    <textarea id="note" name="note" rows="8" placeholder="Write a note…"><p>Patient reports improvement.</p></textarea>
+  </rich-text>
+
+  <p><button id="mentions" type="button">Log mentions</button></p>
+
+  <script type="module">
+    import { defineRichText } from "../src/index.js";
+
+    const people = [
+      { id: "p1", name: "Dr Martin", specialty: "Cardiology" },
+      { id: "p2", name: "Dr Martens", specialty: "General practice" },
+      { id: "p3", name: "Dr Moreau", specialty: "Dermatology" },
+    ];
+    const templates = [
+      { label: "Follow-up", html: "<p><b>Follow-up:</b> return in 3 months.</p>" },
+      { label: "Normal exam", html: "<p>Clinical examination is within normal limits.</p>" },
+    ];
+
+    const box = document.querySelector("#editor");
+    box.options = {
+      suggestions: [
+        {
+          trigger: "@",
+          kind: "mention",
+          mentionType: "practitioner",
+          search: (query) => people.filter((item) => item.name.toLowerCase().includes(query.toLowerCase())),
+          getId: (item) => item.id,
+          getLabel: (item) => item.name,
+          renderItem(item) {
+            const node = document.createElement("div");
+            node.innerHTML = `<strong></strong><br><small></small>`;
+            node.querySelector("strong").textContent = item.name;
+            node.querySelector("small").textContent = item.specialty;
+            return node;
+          },
+        },
+        {
+          trigger: "/",
+          search: (query) => templates.filter((item) => item.label.toLowerCase().includes(query.toLowerCase())),
+          getLabel: (item) => item.label,
+          insert: (item) => ({ type: "html", html: item.html }),
+        },
+      ],
+    };
+
+    defineRichText();
+    document.querySelector("#mentions").addEventListener("click", () => {
+      console.log(box.richText.getMentions());
+    });
+  </script>
+</body>
+</html>
