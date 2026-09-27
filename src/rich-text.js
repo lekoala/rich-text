@@ -774,7 +774,11 @@ export class RichText {
     });
     this.shell.toggleAttribute("data-disabled", disabled);
     this.shell.toggleAttribute("data-readonly", this.source.readOnly);
-    if (!this.editable) this._closeSuggestions();
+    if (!this.editable) {
+      // Re-enabling the editor must not revive a link answer requested before it became non-editable.
+      this._linkRequest += 1;
+      this._closeSuggestions();
+    }
     this._updateToolbarState();
   }
 

@@ -5299,8 +5299,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       });
       this.shell.toggleAttribute("data-disabled", disabled);
       this.shell.toggleAttribute("data-readonly", this.source.readOnly);
-      if (!this.editable)
+      if (!this.editable) {
+        this._linkRequest += 1;
         this._closeSuggestions();
+      }
       this._updateToolbarState();
     }
     _setSurfaceAttributes(attributes) {

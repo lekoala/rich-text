@@ -316,6 +316,43 @@ test.describe("links", () => {
     await expect(page.locator(".rt-editor a")).toHaveAttribute("href", "https://c.test");
   });
 
+  for (const state of ["readonly", "disabled", "fieldset"]) {
+    test(`an async answer stays cancelled after ${state} is cleared`, async ({ page }) => {
+      await open(page);
+      await page.evaluate((state) => {
+        mount({
+          html: "<p>Hello</p>",
+          fieldset: state === "fieldset",
+          options: { requestLink: () => new Promise((resolve) => (window.resolveLink = resolve)) },
+        });
+        caretIn("Hello", 2);
+      }, state);
+      const button = page.locator('[data-command="link"]');
+      await button.click();
+
+      const target = page.locator(state === "fieldset" ? "fieldset" : "#note");
+      const attribute = state === "readonly" ? "readonly" : "disabled";
+      await target.evaluate((node, attribute) => node.setAttribute(attribute, ""), attribute);
+      await expect(button).toBeDisabled();
+      await target.evaluate((node, attribute) => node.removeAttribute(attribute), attribute);
+      await expect(button).toBeEnabled();
+
+      await page.evaluate(async () => {
+        window.resolveLink("https://stale.test");
+        await Promise.resolve();
+      });
+      await expect(page.locator(".rt-editor a")).toHaveCount(0);
+      await expect(page.locator("#note")).toHaveValue("<p>Hello</p>");
+      expect(await page.evaluate(() => window.events)).not.toContain("input");
+
+      // Re-enabling still allows a newly requested link.
+      await page.evaluate(() => caretIn("Hello", 2));
+      await button.click();
+      await page.evaluate(() => window.resolveLink("https://fresh.test"));
+      await expect(page.locator(".rt-editor a")).toHaveAttribute("href", "https://fresh.test");
+    });
+  }
+
   test("refuses unsafe schemes with richtext:linkerror", async ({ page }) => {
     await mountLinks(page);
     await page.evaluate(() => {
