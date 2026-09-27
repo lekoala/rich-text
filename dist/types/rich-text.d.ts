@@ -232,6 +232,8 @@ export declare class RichText {
     /**
      * The vocabulary has no inline styles, but anything that restyles the live editor (browser extensions,
      * test harnesses hiding the caret) writes `style` into it. That must never reach the form value.
+     * Squire also creates hard-coded DIV blocks (list edits, line fixes) whatever its `blockTag`: they are
+     * paragraphs in the value.
      * @returns {string}
      */
     _serialize(): string;
@@ -263,6 +265,20 @@ export declare class RichText {
     _createSuggestionPopup(): HTMLDivElement;
     /** @param {KeyboardEvent} event */
     _onEditorKeydown(event: KeyboardEvent): void;
+    /**
+     * Files are never inserted into the value (no images, no base64): a paste or drop that carries files and no
+     * text is handed to the application, which owns attachments. A paste with text (Word/Excel also put an image
+     * rendering on the clipboard) stays a text paste.
+     * @param {ClipboardEvent | DragEvent} event
+     * @returns {boolean} whether the event was taken
+     */
+    _handOverFiles(event: ClipboardEvent | DragEvent): boolean;
+    /**
+     * Pasting a lone URL over selected text links that text instead of replacing it. Squire only does this for
+     * plain-text clipboards; copying a URL often puts HTML on the clipboard too.
+     * @param {ClipboardEvent} event
+     */
+    _pasteLinkOverSelection(event: ClipboardEvent): void;
     /** Grow a non-collapsed selection so that it never starts or ends inside a mention. */
     _selectWholeMentions(): void;
     /** @param {string} key @returns {boolean} */

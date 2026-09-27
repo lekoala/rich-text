@@ -366,6 +366,11 @@
       richText.focus();
     });
     chat.addEventListener("richtext:invalid", () => logLine("Nothing to send yet."));
+    // Pasted/dropped files never enter the HTML: the composer turns them into attachments.
+    chat.addEventListener("richtext:files", (event) => {
+      const { files, source } = event.detail;
+      logLine(`Attached ${files.map((file) => file.name).join(", ")} (${source}).`);
+    });
 
     // Chrome actions reuse the suggestion seam: they type the trigger, the provider does the rest.
     const typeTrigger = (trigger) => {

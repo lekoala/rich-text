@@ -1,5 +1,7 @@
 /**
  * The mandatory Squire HTML sanitizer (Squire's `sanitizeToDOMFragment` hook).
+ * - A first, default DOMPurify pass removes anything active; the result is normalised to the vocabulary
+ *   (`normalizeMarkup`) inside DOMPurify's inert document, then the strict pass below applies the policy.
  * - `span` is only retained for structured mentions; other spans are unwrapped. A mention label is plain text.
  * - Mention attributes are removed from every other element (a stray `contenteditable` could otherwise
  *   re-enable editing inside a readonly editor, or create non-mention atomic islands).

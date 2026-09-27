@@ -216,6 +216,154 @@ test.describe("sanitizer", () => {
   });
 });
 
+/** Real clipboard shapes, trimmed: what each source puts in text/html. */
+const CLIPBOARDS = {
+  docs: '<meta charset="utf-8"><b style="font-weight:normal;" id="docs-internal-guid-1a2b"><p dir="ltr" style="line-height:1.38;margin-top:0pt;"><span style="font-size:11pt;font-family:Arial;font-weight:400;">Plain </span><span style="font-size:11pt;font-weight:700;">bold</span><span style="font-style:italic;font-weight:400;"> italic</span></p><h2 dir="ltr"><span style="font-size:16pt;font-weight:400;">Heading</span></h2><ul style="margin-top:0;"><li dir="ltr" style="list-style-type:disc;"><p dir="ltr" role="presentation"><span style="font-weight:400;">One</span></p></li><li dir="ltr"><p dir="ltr" role="presentation"><span>Two</span></p></li></ul></b><br class="Apple-interchange-newline">',
+  word: "<html xmlns:o=\"urn:schemas-microsoft-com:office:office\"><head><style>p.MsoNormal{margin:0cm;font-family:Calibri}</style></head><body lang=FR><!--StartFragment--><p class=MsoListParagraphCxSpFirst style='text-indent:-18.0pt;mso-list:l0 level1 lfo1'><![if !supportLists]><span style='font-family:Symbol;mso-list:Ignore'>·<span style='font:7.0pt \"Times New Roman\"'>&nbsp;&nbsp;&nbsp;&nbsp; </span></span><![endif]>First<o:p></o:p></p><p class=MsoListParagraphCxSpLast style='text-indent:-18.0pt;mso-list:l0 level1 lfo1'><![if !supportLists]><span style='font-family:Symbol;mso-list:Ignore'>·<span style='font:7.0pt \"Times New Roman\"'>&nbsp;&nbsp;&nbsp;&nbsp; </span></span><![endif]>Second<o:p></o:p></p><p class=MsoListParagraphCxSpFirst style='text-indent:-18.0pt;mso-list:l1 level1 lfo2'><![if !supportLists]><span style='mso-list:Ignore'>1.<span style='font:7.0pt \"Times New Roman\"'>&nbsp;&nbsp; </span></span><![endif]>Step<o:p></o:p></p><p class=MsoNormal><b>Bold</b> and <i>italic</i> text<o:p></o:p></p><!--EndFragment--></body></html>",
+  web: '<div class="post"><h1>Title</h1><div>Line one</div><div>Line <strong>two</strong></div></div><pre>code a\ncode b\n</pre><table><tbody><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></tbody></table><p style="font-weight:bold">Styled para</p>',
+  chat: '<meta charset="utf-8"><span>Hi <b data-stringify-type="bold">team</b></span><br><span>Next <i>line</i></span><div data-stringify-type="pre"><pre>x = 1\ny = 2</pre></div>',
+};
+
+/** Dispatch a synthetic paste on the editor: `entries` maps MIME types to data, `files` to file names. */
+function paste(page, entries) {
+  return page.evaluate((entries) => {
+    const data = new DataTransfer();
+    for (const [type, value] of Object.entries(entries)) {
+      if (type === "files")
+        for (const name of value) data.items.add(new File(["x"], name, { type: "image/png" }));
+      else data.setData(type, value);
+    }
+    rt.surface.dispatchEvent(
+      new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }),
+    );
+  }, entries);
+}
+
+test.describe("paste", () => {
+  test("Google Docs, Word, web and chat clipboards keep what the vocabulary can express", async ({
+    page,
+  }) => {
+    await open(page);
+    const expected = {
+      docs: "<p>Plain <b>bold</b><i> italic</i></p><p><b>Heading</b></p><ul><li>One</li><li>Two</li></ul>",
+      word: "<ul><li>First</li><li>Second</li></ul><ol><li>Step</li></ol><p><b>Bold</b> and <i>italic</i> text</p>",
+      web:
+        "<p><b>Title</b></p><p>Line one</p><p>Line <b>two</b></p><p>code a<br>code b</p><p>A B</p><p>1 2</p>" +
+        "<p><b>Styled para</b></p>",
+      chat: "<p>Hi <b>team</b></p><p>Next <i>line</i></p><p>x = 1<br>y = 2</p>",
+    };
+    for (const [source, html] of Object.entries(CLIPBOARDS)) {
+      await page.evaluate((html) => mount({ html }), html);
+      await expect(page.locator("#note"), source).toHaveValue(expected[source]);
+    }
+  });
+
+  test("a Docs paste lands as blocks; an inline styled paste stays in the paragraph", async ({
+    page,
+    browserName,
+  }) => {
+    test.skip(browserName === "firefox", "Firefox ignores clipboardData on synthetic paste events");
+    await open(page);
+    await page.evaluate(() => mount({ html: "<p>Start</p>" }));
+    await page.evaluate(() => caretIn("Start", 5));
+    await paste(page, {
+      "text/html": '<span style="font-weight:700">Bold</span> tail',
+      "text/plain": "Bold tail",
+    });
+    // Squire keeps a trailing <br> after a paste; what matters is one paragraph.
+    await expect(page.locator("#note")).toHaveValue(/^<p>Start<b>Bold<\/b> tail(<br>)?<\/p>$/);
+
+    await page.evaluate(() => mount({ html: "<p>Start</p>" }));
+    await page.evaluate(() => caretIn("Start", 5));
+    await paste(page, { "text/html": CLIPBOARDS.docs, "text/plain": "Plain bold italic" });
+    await expect(page.locator("#note")).toHaveValue(/<ul><li>One<\/li><li>Two(<br>)?<\/li><\/ul>/);
+    const value = await page.locator("#note").inputValue();
+    expect(value).toContain("<b>bold</b>");
+    expect(value).not.toMatch(/<div|<h2|<span|style=|docs-internal/);
+  });
+
+  test("Squire's own blocks are paragraphs in the value", async ({ page }) => {
+    await open(page);
+    await page.evaluate(() => mount({ html: "<p>item</p>" }));
+    await page.locator(".rt-editor p").click();
+    await page.getByRole("button", { name: "Bulleted list" }).click();
+    await expect(page.locator("#note")).toHaveValue(/^<ul><li>item<\/li><\/ul>/);
+    expect(await page.locator("#note").inputValue()).not.toContain("<div");
+  });
+
+  test("pasting a URL over selected text links that text", async ({ page, browserName }) => {
+    test.skip(browserName === "firefox", "Firefox ignores clipboardData on synthetic paste events");
+    await open(page);
+    const select = () =>
+      page.evaluate(() => {
+        const text = rt.surface.querySelector("p").firstChild;
+        const range = document.createRange();
+        range.setStart(text, 6);
+        range.setEnd(text, 11);
+        rt.squire.focus();
+        rt.squire.setSelection(range);
+      });
+    await page.evaluate(() => mount({ html: "<p>Hello world</p>" }));
+    await select();
+    // Copying a URL usually puts HTML on the clipboard too; Squire alone would replace the text.
+    await paste(page, {
+      "text/html": '<a href="https://ok.test/page">https://ok.test/page</a>',
+      "text/plain": "https://ok.test/page",
+    });
+    await expect(page.locator("#note")).toHaveValue('<p>Hello <a href="https://ok.test/page">world</a></p>');
+
+    // Outside the link policy: an ordinary paste.
+    await page.evaluate(() => mount({ html: "<p>Hello world</p>" }));
+    await select();
+    await paste(page, { "text/plain": "ftp://files.test" });
+    await expect(page.locator("#note")).toHaveValue(/^<p>Hello(&nbsp;| )ftp:\/\/files\.test(<br>)?<\/p>$/);
+  });
+
+  test("pasted and dropped files are handed to the application, never inserted", async ({
+    page,
+    browserName,
+  }) => {
+    await open(page);
+    await page.evaluate(() => mount({ html: "<p>Start</p>" }));
+    await page.evaluate(() => {
+      window.handed = [];
+      rt.source.addEventListener("richtext:files", (event) =>
+        window.handed.push({
+          source: event.detail.source,
+          names: event.detail.files.map((file) => file.name),
+        }),
+      );
+    });
+
+    const dropPrevented = await page.evaluate(() => {
+      const data = new DataTransfer();
+      data.items.add(new File(["x"], "dropped.pdf", { type: "application/pdf" }));
+      const box = rt.surface.getBoundingClientRect();
+      const init = {
+        dataTransfer: data,
+        bubbles: true,
+        cancelable: true,
+        clientX: box.x + 5,
+        clientY: box.y + 5,
+      };
+      return !rt.surface.dispatchEvent(new DragEvent("drop", init));
+    });
+    expect(dropPrevented).toBe(true);
+    await expect(page.locator("#note")).toHaveValue("<p>Start</p>");
+
+    const expected = [{ source: "drop", names: ["dropped.pdf"] }];
+    if (browserName !== "firefox") {
+      await page.evaluate(() => caretIn("Start", 5));
+      await paste(page, { files: ["shot.png"] });
+      // Word and Excel put an image rendering next to the text: that stays a text paste.
+      await paste(page, { "text/plain": "typed", files: ["render.png"] });
+      await expect(page.locator("#note")).toHaveValue(/^<p>Starttyped(<br>)?<\/p>$/);
+      expected.push({ source: "paste", names: ["shot.png"] });
+    }
+    expect(await page.evaluate(() => window.handed)).toEqual(expected);
+  });
+});
+
 test.describe("links", () => {
   /** @param {import("@playwright/test").Page} page */
   async function mountLinks(page) {

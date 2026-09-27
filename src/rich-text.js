@@ -430,9 +430,13 @@ export class RichText {
         else if (inToolbar) this._onToolbarKeydown(/** @type {KeyboardEvent} */ (event));
         break;
       case "cut":
+        if (inSurface) this._selectWholeMentions();
+        break;
       case "paste":
       case "drop":
-        if (inSurface) this._selectWholeMentions();
+        if (!inSurface || this._handOverFiles(/** @type {ClipboardEvent | DragEvent} */ (event))) break;
+        this._selectWholeMentions();
+        if (event.type === "paste") this._pasteLinkOverSelection(/** @type {ClipboardEvent} */ (event));
         break;
       case "mousedown":
         // Pointer use of the toolbar keeps focus, and the selection, in the editor. Keyboard users still
@@ -732,14 +736,22 @@ export class RichText {
   /**
    * The vocabulary has no inline styles, but anything that restyles the live editor (browser extensions,
    * test harnesses hiding the caret) writes `style` into it. That must never reach the form value.
+   * Squire also creates hard-coded DIV blocks (list edits, line fixes) whatever its `blockTag`: they are
+   * paragraphs in the value.
    * @returns {string}
    */
   _serialize() {
     const html = this.squire.getHTML();
-    if (!html.includes("style=")) return html;
+    if (!html.includes("style=") && !html.includes("<div")) return html;
     const template = this.source.ownerDocument.createElement("template");
     template.innerHTML = html;
-    for (const element of template.content.querySelectorAll("[style]")) element.removeAttribute("style");
+    const content = template.content;
+    for (const element of content.querySelectorAll("[style]")) element.removeAttribute("style");
+    for (const div of [...content.querySelectorAll("div")].reverse()) {
+      const paragraph = this.source.ownerDocument.createElement("p");
+      paragraph.append(...div.childNodes);
+      div.replaceWith(paragraph);
+    }
     return template.innerHTML;
   }
 
@@ -901,6 +913,53 @@ export class RichText {
       return;
     }
     if (!NAVIGATION_KEYS.has(event.key)) this._selectWholeMentions();
+  }
+
+  /**
+   * Files are never inserted into the value (no images, no base64): a paste or drop that carries files and no
+   * text is handed to the application, which owns attachments. A paste with text (Word/Excel also put an image
+   * rendering on the clipboard) stays a text paste.
+   * @param {ClipboardEvent | DragEvent} event
+   * @returns {boolean} whether the event was taken
+   */
+  _handOverFiles(event) {
+    const data = "clipboardData" in event ? event.clipboardData : event.dataTransfer;
+    const files = [...(data?.files ?? [])];
+    if (!data || !files.length || data.getData("text/plain").trim()) return false;
+    event.preventDefault();
+    // Squire listens on its root: stopping here, in the capture phase, keeps it from handling the event.
+    event.stopPropagation();
+    if (!this.editable) return true;
+    this.source.dispatchEvent(
+      new CustomEvent("richtext:files", {
+        bubbles: true,
+        detail: { files, source: event.type, richText: this },
+      }),
+    );
+    return true;
+  }
+
+  /**
+   * Pasting a lone URL over selected text links that text instead of replacing it. Squire only does this for
+   * plain-text clipboards; copying a URL often puts HTML on the clipboard too.
+   * @param {ClipboardEvent} event
+   */
+  _pasteLinkOverSelection(event) {
+    const text = event.clipboardData?.getData("text/plain").trim() ?? "";
+    const range = this.squire.getSelection();
+    if (!text || range.collapsed || !range.toString().trim()) return;
+    const match = this.squire.linkRegExp.exec(text);
+    if (!match || match[0].length !== text.length) return;
+    // The same href Squire's own link detection builds.
+    const href = match[1]
+      ? /^https?:/i.test(match[1])
+        ? match[1]
+        : `http://${match[1]}`
+      : `mailto:${match[0]}`;
+    if (!isSafeHref(href)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.squire.makeLink(href);
   }
 
   /** Grow a non-collapsed selection so that it never starts or ends inside a mention. */

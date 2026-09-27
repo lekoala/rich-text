@@ -65,7 +65,18 @@ Use `toolbar="none"` or provide a list:
 ```
 
 Images, tables, colors, arbitrary font styles, embeds and attachments are out of scope. Attachments should be
-owned by the surrounding composer/application, not serialized as accidental HTML.
+owned by the surrounding composer/application, not serialized as accidental HTML: a paste or drop that carries
+files (and no text) inserts nothing and dispatches `richtext:files` instead.
+
+```js
+textarea.addEventListener("richtext:files", (event) => {
+  const { files, source } = event.detail; // File[], "paste" | "drop"
+  composer.attach(files);
+});
+```
+
+A paste with text stays a text paste even when the clipboard also holds an image (Word and Excel add a rendering
+of the selection).
 
 ## Mentions
 
@@ -148,6 +159,19 @@ URLs and `http:`, `https:`, `mailto:`, `tel:` only. A link with a missing or ref
 text. The toolbar reports a refused URL with `richtext:linkerror`. Squire's automatic linking of typed/pasted URLs
 is restricted to the same policy (`http(s)`, `www.`/bare domains, e-mail addresses as `mailto:`); `ftp://` stays
 plain text.
+
+Before the strict pass, HTML entering the editor (paste, drop, initial value, suggestion HTML) is mapped to
+what the vocabulary can express, inside DOMPurify's inert document and after a default DOMPurify pass:
+
+- bold/italic expressed as styles become `b`/`i` (Google Docs spans); a `b`/`strong` styled `font-weight:normal`
+  is unwrapped (the Google Docs wrapper that would otherwise make a whole paste bold);
+- headings become bold paragraphs; `div`-like wrappers become paragraphs or are unwrapped when they hold blocks;
+  `pre` keeps its lines as `<br>`; a table becomes one paragraph per row;
+- Word (desktop) list paragraphs become flat `ul`/`ol` lists; a lone paragraph in a list item is unwrapped;
+- loose lines become paragraphs (Squire would otherwise create `div` blocks, which are also written as `p` in the
+  value).
+
+Pasting a lone URL over selected text links that text, within the link policy.
 
 Squire's built-in shortcuts for tags outside the vocabulary (underline, strikethrough, sub/superscript, code)
 are disabled so keyboard input cannot produce HTML that the sanitizer would drop on the next load.
@@ -286,7 +310,8 @@ declaratively and exposes the instance as `element.richText` (or `await element.
 | `dispose()`       | Remove the generated UI and listeners, restore the textarea. Idempotent.   |
 
 Events are dispatched on the textarea and bubble: native `input`/`change`, and `richtext:invalid`,
-`richtext:linkerror`, `richtext:mentionselect`, `richtext:mentionremove`, `richtext:suggestionerror`. The custom
+`richtext:files`, `richtext:linkerror`, `richtext:mentionselect`, `richtext:mentionremove`,
+`richtext:suggestionerror`. The custom
 element dispatches `richtext:ready`.
 
 ## Demos

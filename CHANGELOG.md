@@ -9,6 +9,13 @@
 - New `--rt-divider` token for the toolbar separators, quote bar and popover border. `--rt-border` now paints only the
   field frame, so an invalid/state override of it no longer turns the inner lines red.
 
+- Paste fidelity: styles, headings, `div`/`pre`/table wrappers and Word lists from Google Docs, Word, web pages
+  and chat apps are mapped to the vocabulary instead of being flattened (or, for Google Docs, made all bold).
+- The value no longer contains `div`: Squire's hard-coded DIV blocks (loose lines, list edits) are paragraphs.
+- Pasting a lone URL over selected text links the text, also when the clipboard carries HTML.
+- New `richtext:files` event: pasted or dropped files (without text) are handed to the application instead of being
+  dropped silently or inserted.
+
 ## 0.1.0
 
 First release.

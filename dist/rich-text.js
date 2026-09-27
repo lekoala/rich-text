@@ -3544,7 +3544,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     const originalDocument = document2;
     const currentScript = originalDocument.currentScript;
     window2.DocumentFragment;
-    const { HTMLTemplateElement, Node: Node2, Element: Element2, NodeFilter } = window2;
+    const { HTMLTemplateElement, Node: Node2, Element: Element2, NodeFilter: NodeFilter2 } = window2;
     window2.NamedNodeMap === undefined && (window2.NamedNodeMap || window2.MozNamedAttrMap);
     window2.HTMLFormElement;
     const { DOMParser, trustedTypes } = window2;
@@ -4129,7 +4129,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     };
     const _createNodeIterator = function _createNodeIterator(root) {
       const doc = getOwnerDocument ? getOwnerDocument(root) : root.ownerDocument;
-      return createNodeIterator.call(doc || root, root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_COMMENT | NodeFilter.SHOW_TEXT | NodeFilter.SHOW_PROCESSING_INSTRUCTION | NodeFilter.SHOW_CDATA_SECTION, null);
+      return createNodeIterator.call(doc || root, root, NodeFilter2.SHOW_ELEMENT | NodeFilter2.SHOW_COMMENT | NodeFilter2.SHOW_TEXT | NodeFilter2.SHOW_PROCESSING_INSTRUCTION | NodeFilter2.SHOW_CDATA_SECTION, null);
     };
     const _stripTemplateExpressions = function _stripTemplateExpressions(value) {
       value = stringReplace(value, MUSTACHE_EXPR$1, " ");
@@ -4141,7 +4141,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       var _node$querySelectorAl;
       node.normalize();
       const doc = getOwnerDocument ? getOwnerDocument(node) : node.ownerDocument;
-      const walker = createNodeIterator.call(doc || node, node, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_COMMENT | NodeFilter.SHOW_CDATA_SECTION | NodeFilter.SHOW_PROCESSING_INSTRUCTION, null);
+      const walker = createNodeIterator.call(doc || node, node, NodeFilter2.SHOW_TEXT | NodeFilter2.SHOW_COMMENT | NodeFilter2.SHOW_CDATA_SECTION | NodeFilter2.SHOW_PROCESSING_INSTRUCTION, null);
       let currentNode = walker.nextNode();
       while (currentNode) {
         currentNode.data = _stripTemplateExpressions(currentNode.data);
@@ -4654,9 +4654,130 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   var ALLOWED_TAGS = ["p", "br", "b", "strong", "i", "em", "ul", "ol", "li", "blockquote", "a", "span"];
   var ALLOWED_ATTRIBUTES = ["href", "title", "data-rt-mention", "data-id", "contenteditable"];
   var MENTION_ATTRIBUTES = ["data-rt-mention", "data-id", "contenteditable"];
+  var CONTAINERS = "div, section, article, header, footer, main, aside, nav, address, figure, figcaption, center, details, " + "summary, dl, dt, dd, table, thead, tbody, tfoot, tr, h1, h2, h3, h4, h5, h6, pre";
+  var BLOCKS = "p, ul, ol, li, blockquote";
+  function normalizeMarkup(root) {
+    const doc = root.ownerDocument;
+    for (const br of root.querySelectorAll("br.Apple-interchange-newline"))
+      br.remove();
+    convertWordLists(root);
+    applyInlineStyles(root);
+    for (const cell of [...root.querySelectorAll("td, th")]) {
+      if (cell.nextElementSibling)
+        cell.append(" ");
+      cell.replaceWith(...cell.childNodes);
+    }
+    for (const element of [...root.querySelectorAll(CONTAINERS)].reverse()) {
+      if (element.localName === "pre")
+        preserveLineBreaks(element);
+      if (element.querySelector(BLOCKS)) {
+        element.replaceWith(...element.childNodes);
+        continue;
+      }
+      const paragraph = doc.createElement("p");
+      if (/^h[1-6]$/.test(element.localName) && !element.querySelector("b, strong")) {
+        const bold = doc.createElement("b");
+        bold.append(...element.childNodes);
+        paragraph.append(bold);
+      } else {
+        paragraph.append(...element.childNodes);
+      }
+      element.replaceWith(paragraph);
+    }
+    for (const item of root.querySelectorAll("li")) {
+      const blocks = [...item.children].filter((child) => child.matches(BLOCKS));
+      if (blocks.length === 1 && blocks[0].localName === "p")
+        blocks[0].replaceWith(...blocks[0].childNodes);
+    }
+    wrapLooseInline(root);
+  }
+  function wrapLooseInline(root) {
+    const doc = root.ownerDocument;
+    const nodes = [...root.childNodes];
+    if (!nodes.some((node) => node.nodeName === "BR" || isBlock(node)))
+      return;
+    let paragraph = null;
+    for (const node of nodes) {
+      if (node.nodeName === "BR" || isBlock(node)) {
+        if (node.nodeName === "BR")
+          node.remove();
+        paragraph = null;
+        continue;
+      }
+      if (!paragraph) {
+        if (node.nodeType === 3 && !node.textContent?.trim())
+          continue;
+        paragraph = doc.createElement("p");
+        node.before(paragraph);
+      }
+      paragraph.append(node);
+    }
+  }
+  function isBlock(node) {
+    return node.nodeType === 1 && node.matches(BLOCKS);
+  }
+  function applyInlineStyles(root) {
+    for (const element of [...root.querySelectorAll("[style]")]) {
+      if (!element.style || element.hasAttribute("data-rt-mention"))
+        continue;
+      const { fontWeight, fontStyle } = element.style;
+      const weight = { bold: 700, bolder: 700, normal: 400, lighter: 400 }[fontWeight] ?? Number.parseInt(fontWeight, 10);
+      const name = element.localName;
+      const boldTag = name === "b" || name === "strong";
+      const italicTag = name === "i" || name === "em";
+      const wraps = !element.matches("ul, ol, table, thead, tbody, tfoot, tr") && !element.querySelector(BLOCKS);
+      if (wraps && weight >= 600 && !boldTag && !element.closest("b, strong"))
+        wrapChildren(element, "b");
+      if (wraps && /italic|oblique/.test(fontStyle) && !italicTag && !element.closest("i, em")) {
+        wrapChildren(element, "i");
+      }
+      if (boldTag && weight < 600 || italicTag && fontStyle === "normal")
+        element.replaceWith(...element.childNodes);
+    }
+  }
+  function convertWordLists(root) {
+    const doc = root.ownerDocument;
+    let list = null;
+    for (const item of [...root.querySelectorAll("p")]) {
+      if (!/mso-list:\s*l\d/i.test(item.getAttribute("style") ?? ""))
+        continue;
+      const marker = item.querySelector('[style*="mso-list:ignore" i]');
+      const tag = /^\s*\w{1,4}[.)]/.test(marker?.textContent ?? "") ? "ol" : "ul";
+      marker?.remove();
+      if (!list || item.previousElementSibling !== list || list.localName !== tag) {
+        list = doc.createElement(tag);
+        item.before(list);
+      }
+      const entry = doc.createElement("li");
+      entry.append(...item.childNodes);
+      list.append(entry);
+      item.remove();
+    }
+  }
+  function preserveLineBreaks(element) {
+    const doc = element.ownerDocument;
+    const walker = doc.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    const texts = [];
+    for (let node = walker.nextNode();node; node = walker.nextNode())
+      texts.push(node);
+    for (const text of texts) {
+      const lines = text.data.replace(/\n$/, "").split(`
+`);
+      if (lines.length < 2)
+        continue;
+      text.replaceWith(...lines.flatMap((line, index) => index ? [doc.createElement("br"), line] : [line]));
+    }
+  }
+  function wrapChildren(element, tag) {
+    const wrapper = element.ownerDocument.createElement(tag);
+    wrapper.append(...element.childNodes);
+    element.append(wrapper);
+  }
   function sanitizeToDOMFragment(html, editor) {
     const doc = editor.getRoot().ownerDocument;
-    const sanitized = purify_default.sanitize(html, {
+    const loose = purify_default.sanitize(html, { RETURN_DOM: true });
+    normalizeMarkup(loose);
+    const sanitized = purify_default.sanitize(loose.innerHTML, {
       ALLOWED_TAGS,
       ALLOWED_ATTR: ALLOWED_ATTRIBUTES,
       ALLOW_DATA_ATTR: false,
@@ -4978,10 +5099,16 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             this._onToolbarKeydown(event);
           break;
         case "cut":
-        case "paste":
-        case "drop":
           if (inSurface)
             this._selectWholeMentions();
+          break;
+        case "paste":
+        case "drop":
+          if (!inSurface || this._handOverFiles(event))
+            break;
+          this._selectWholeMentions();
+          if (event.type === "paste")
+            this._pasteLinkOverSelection(event);
           break;
         case "mousedown":
           if (inToolbar && target instanceof Element && target.closest("button"))
@@ -5261,12 +5388,18 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }
     _serialize() {
       const html = this.squire.getHTML();
-      if (!html.includes("style="))
+      if (!html.includes("style=") && !html.includes("<div"))
         return html;
       const template = this.source.ownerDocument.createElement("template");
       template.innerHTML = html;
-      for (const element of template.content.querySelectorAll("[style]"))
+      const content = template.content;
+      for (const element of content.querySelectorAll("[style]"))
         element.removeAttribute("style");
+      for (const div of [...content.querySelectorAll("div")].reverse()) {
+        const paragraph = this.source.ownerDocument.createElement("p");
+        paragraph.append(...div.childNodes);
+        div.replaceWith(paragraph);
+      }
       return template.innerHTML;
     }
     _dispatchSource(type) {
@@ -5394,6 +5527,36 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       }
       if (!NAVIGATION_KEYS.has(event.key))
         this._selectWholeMentions();
+    }
+    _handOverFiles(event) {
+      const data = "clipboardData" in event ? event.clipboardData : event.dataTransfer;
+      const files = [...data?.files ?? []];
+      if (!data || !files.length || data.getData("text/plain").trim())
+        return false;
+      event.preventDefault();
+      event.stopPropagation();
+      if (!this.editable)
+        return true;
+      this.source.dispatchEvent(new CustomEvent("richtext:files", {
+        bubbles: true,
+        detail: { files, source: event.type, richText: this }
+      }));
+      return true;
+    }
+    _pasteLinkOverSelection(event) {
+      const text = event.clipboardData?.getData("text/plain").trim() ?? "";
+      const range = this.squire.getSelection();
+      if (!text || range.collapsed || !range.toString().trim())
+        return;
+      const match = this.squire.linkRegExp.exec(text);
+      if (!match || match[0].length !== text.length)
+        return;
+      const href = match[1] ? /^https?:/i.test(match[1]) ? match[1] : `http://${match[1]}` : `mailto:${match[0]}`;
+      if (!isSafeHref(href))
+        return;
+      event.preventDefault();
+      event.stopPropagation();
+      this.squire.makeLink(href);
     }
     _selectWholeMentions() {
       const range = this.squire.getSelection();

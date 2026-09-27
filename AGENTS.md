@@ -21,6 +21,9 @@ Build a small, opinionated rich-text form control around Squire. Do not build a 
   The label is presentation; `type + id` is identity.
 - Mention deletion must be atomic at adjacent Backspace/Delete boundaries. Browser tests across Chromium, Firefox and
   WebKit are mandatory for any change touching mentions or selection.
+- Files are never inserted into the value (no images, no base64): a paste/drop carrying files and no text is handed
+  to the application with `richtext:files`.
+- The value only contains the vocabulary: Squire's hard-coded `div` blocks are serialized as `p`.
 - Suggestion providers are async-safe: previous searches are aborted and stale results never render.
 - Suggestion strings are rendered as text. Rich suggestion rows return DOM Nodes.
 - HTML insertion from suggestion providers still goes through Squire's configured sanitizer.
