@@ -111,7 +111,6 @@ export declare class RichText {
     _composing: boolean;
     /** @type {AbortController | null} */
     _suggestionAbort: AbortController | null;
-    _suggestionRevision: number;
     /** @type {{ node: Node, start: number, query: string, provider: SuggestionProvider } | null} */
     _suggestionKey: {
         node: Node;
@@ -209,6 +208,8 @@ export declare class RichText {
     /** @param {Event} event */
     _onDocumentPointerdown(event: Event): void;
     _buildToolbar(): void;
+    /** @returns {HTMLButtonElement[]} */
+    _enabledToolbarButtons(): HTMLButtonElement[];
     /** @param {HTMLButtonElement | null} [preferred] */
     _syncToolbarTabStops(preferred?: HTMLButtonElement | null): void;
     /** @param {EventTarget | null} target */

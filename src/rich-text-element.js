@@ -1,4 +1,3 @@
-import { normalizeToolbar } from "./helpers.js";
 import { RichText } from "./rich-text.js";
 
 /** @typedef {import("./rich-text.js").RichTextOptions} RichTextOptions */
@@ -16,8 +15,6 @@ export class RichTextElement extends HTMLElement {
     super();
     /** @type {RichText | null} */
     this._richText = null;
-    /** @type {HTMLTextAreaElement | null} */
-    this._source = null;
     /** @type {RichTextOptions} */
     this._options = {};
     /** @type {MutationObserver | null} */
@@ -57,7 +54,7 @@ export class RichTextElement extends HTMLElement {
 
   /** @returns {HTMLTextAreaElement | null} */
   get source() {
-    return this._source || this.#findSource();
+    return this._richText?.source ?? this.#findSource();
   }
 
   /** @returns {RichText | null} */
@@ -92,15 +89,13 @@ export class RichTextElement extends HTMLElement {
       // The textarea was removed (e.g. a framework re-render): drop the editor until a new one appears.
       this._richText?.dispose();
       this._richText = null;
-      this._source = null;
       return null;
     }
 
     // Same textarea, possibly moved to another form/fieldset: re-read its document context.
-    if (this._richText && this._source === source) return this._richText.refresh();
+    if (this._richText?.source === source) return this._richText.refresh();
     this._richText?.dispose();
 
-    this._source = source;
     this._richText = new RichText(source, this.#resolvedOptions());
 
     const ready = this._readyResolvers.splice(0);
@@ -126,7 +121,6 @@ export class RichTextElement extends HTMLElement {
     this._sourceObserver = null;
     this._richText?.dispose();
     this._richText = null;
-    this._source = null;
   }
 
   #findSource() {
@@ -140,14 +134,14 @@ export class RichTextElement extends HTMLElement {
   #watchSource() {
     if (this._sourceObserver) return;
     this._sourceObserver = new MutationObserver(() => {
-      if (this.isConnected && this.#findSource() !== this._source) this.upgrade();
+      if (this.isConnected && this.#findSource() !== this._richText?.source) this.upgrade();
     });
     this._sourceObserver.observe(this, { childList: true });
   }
 
   #resolvedOptions() {
     const attrs = {};
-    if (this.hasAttribute("toolbar")) attrs.toolbar = normalizeToolbar(this.getAttribute("toolbar"));
+    if (this.hasAttribute("toolbar")) attrs.toolbar = this.getAttribute("toolbar") ?? undefined;
     return { ...attrs, ...this._options };
   }
 
@@ -157,10 +151,8 @@ export class RichTextElement extends HTMLElement {
     queueMicrotask(() => {
       this._rebuildQueued = false;
       if (!this.isConnected || !this._richText) return;
-      const source = this._source;
       this._richText.dispose();
       this._richText = null;
-      this._source = source;
       this.upgrade();
     });
   }

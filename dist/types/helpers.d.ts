@@ -5,14 +5,12 @@ export type SuggestionMatch = {
     trigger: string;
     query: string;
     start: number;
-    end: number;
 };
 /**
  * @typedef {Object} SuggestionMatch
  * @property {string} trigger
  * @property {string} query
  * @property {number} start
- * @property {number} end
  */
 /**
  * Normalize a toolbar declaration while rejecting unknown commands. `|` starts a new group; empty groups

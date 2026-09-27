@@ -1,99 +1,5 @@
 /*** @lekoala/rich-text v0.1.0 - https://github.com/lekoala/rich-text ***/
 (() => {
-  // src/helpers.js
-  var TOOLBAR_SEPARATOR = "|";
-  var DEFAULT_TOOLBAR = [
-    "bold",
-    "italic",
-    TOOLBAR_SEPARATOR,
-    "bullet-list",
-    "ordered-list",
-    TOOLBAR_SEPARATOR,
-    "link",
-    "blockquote",
-    TOOLBAR_SEPARATOR,
-    "undo",
-    "redo"
-  ];
-  var TOOLBAR_COMMANDS = new Set(DEFAULT_TOOLBAR.filter((entry) => entry !== TOOLBAR_SEPARATOR));
-  function normalizeToolbar(value) {
-    if (value == null)
-      return [...DEFAULT_TOOLBAR];
-    const entries = Array.isArray(value) ? value : String(value).replaceAll("|", " | ").split(/[\s,]+/);
-    if (entries.length === 1 && entries[0] === "none")
-      return [];
-    const result = [];
-    for (const entry of entries) {
-      if (entry === TOOLBAR_SEPARATOR) {
-        if (result.length && result.at(-1) !== TOOLBAR_SEPARATOR)
-          result.push(entry);
-        continue;
-      }
-      if (!entry || !TOOLBAR_COMMANDS.has(entry) || result.includes(entry))
-        continue;
-      result.push(entry);
-    }
-    if (result.at(-1) === TOOLBAR_SEPARATOR)
-      result.pop();
-    return result;
-  }
-  function toolbarGroups(toolbar) {
-    const groups = [[]];
-    for (const entry of toolbar) {
-      if (entry === TOOLBAR_SEPARATOR)
-        groups.push([]);
-      else
-        groups.at(-1)?.push(entry);
-    }
-    return groups.filter((group) => group.length);
-  }
-  function matchSuggestionText(textBeforeCaret, triggers) {
-    let best = null;
-    for (const trigger of triggers) {
-      if (!trigger)
-        continue;
-      const start = textBeforeCaret.lastIndexOf(trigger);
-      if (start < 0)
-        continue;
-      const before = start === 0 ? "" : textBeforeCaret[start - 1];
-      if (before && !/[\s([{]/.test(before))
-        continue;
-      const query = textBeforeCaret.slice(start + trigger.length);
-      if (/\s/.test(query))
-        continue;
-      if (!best || start > best.start || start === best.start && trigger.length > best.trigger.length) {
-        best = { trigger, query, start, end: textBeforeCaret.length };
-      }
-    }
-    return best;
-  }
-  function isSafeHref(href) {
-    const value = String(href ?? "").trim();
-    if (!value)
-      return false;
-    if (value.startsWith("#") || value.startsWith("/") || value.startsWith("./") || value.startsWith("../")) {
-      return true;
-    }
-    try {
-      const url = new URL(value, "https://example.invalid/");
-      return ["http:", "https:", "mailto:", "tel:"].includes(url.protocol);
-    } catch {
-      return false;
-    }
-  }
-  function isEditorEmpty(root) {
-    if (root.querySelector("[data-rt-mention], img"))
-      return false;
-    return !(root.textContent ?? "").replace(/[\s\u00a0\u200b]+/g, "").length;
-  }
-  function mentionFromElement(element) {
-    if (!(element instanceof HTMLElement) || !element.hasAttribute("data-rt-mention"))
-      return null;
-    const type = element.getAttribute("data-rt-mention") || "mention";
-    const id = element.getAttribute("data-id") || "";
-    return { type, id, label: element.textContent ?? "" };
-  }
-
   // node_modules/@lekoala/floating/src/floating.js
   function crossAxisFor(side) {
     return side === "top" || side === "bottom" ? "x" : "y";
@@ -2520,6 +2426,100 @@
   };
   var Ji = xe;
 
+  // src/helpers.js
+  var TOOLBAR_SEPARATOR = "|";
+  var DEFAULT_TOOLBAR = [
+    "bold",
+    "italic",
+    TOOLBAR_SEPARATOR,
+    "bullet-list",
+    "ordered-list",
+    TOOLBAR_SEPARATOR,
+    "link",
+    "blockquote",
+    TOOLBAR_SEPARATOR,
+    "undo",
+    "redo"
+  ];
+  var TOOLBAR_COMMANDS = new Set(DEFAULT_TOOLBAR.filter((entry) => entry !== TOOLBAR_SEPARATOR));
+  function normalizeToolbar(value) {
+    if (value == null)
+      return [...DEFAULT_TOOLBAR];
+    const entries = Array.isArray(value) ? value : String(value).replaceAll("|", " | ").split(/[\s,]+/);
+    if (entries.length === 1 && entries[0] === "none")
+      return [];
+    const result = [];
+    for (const entry of entries) {
+      if (entry === TOOLBAR_SEPARATOR) {
+        if (result.length && result.at(-1) !== TOOLBAR_SEPARATOR)
+          result.push(entry);
+        continue;
+      }
+      if (!entry || !TOOLBAR_COMMANDS.has(entry) || result.includes(entry))
+        continue;
+      result.push(entry);
+    }
+    if (result.at(-1) === TOOLBAR_SEPARATOR)
+      result.pop();
+    return result;
+  }
+  function toolbarGroups(toolbar) {
+    const groups = [[]];
+    for (const entry of toolbar) {
+      if (entry === TOOLBAR_SEPARATOR)
+        groups.push([]);
+      else
+        groups.at(-1)?.push(entry);
+    }
+    return groups.filter((group) => group.length);
+  }
+  function matchSuggestionText(textBeforeCaret, triggers) {
+    let best = null;
+    for (const trigger of triggers) {
+      if (!trigger)
+        continue;
+      const start = textBeforeCaret.lastIndexOf(trigger);
+      if (start < 0)
+        continue;
+      const before = start === 0 ? "" : textBeforeCaret[start - 1];
+      if (before && !/[\s([{]/.test(before))
+        continue;
+      const query = textBeforeCaret.slice(start + trigger.length);
+      if (/\s/.test(query))
+        continue;
+      if (!best || start > best.start || start === best.start && trigger.length > best.trigger.length) {
+        best = { trigger, query, start };
+      }
+    }
+    return best;
+  }
+  function isSafeHref(href) {
+    const value = String(href ?? "").trim();
+    if (!value)
+      return false;
+    if (value.startsWith("#") || value.startsWith("/") || value.startsWith("./") || value.startsWith("../")) {
+      return true;
+    }
+    try {
+      const url = new URL(value, "https://example.invalid/");
+      return ["http:", "https:", "mailto:", "tel:"].includes(url.protocol);
+    } catch {
+      return false;
+    }
+  }
+  function isEditorEmpty(root) {
+    if (root.querySelector("[data-rt-mention]"))
+      return false;
+    return !(root.textContent ?? "").replace(/[\s\u00a0\u200b]+/g, "").length;
+  }
+  function mentionFromElement(element) {
+    if (!(element instanceof HTMLElement) || !element.hasAttribute("data-rt-mention"))
+      return null;
+    const type = element.getAttribute("data-rt-mention") || "mention";
+    const id = element.getAttribute("data-id") || "";
+    return { type, id, label: element.textContent ?? "" };
+  }
+
   // node_modules/dompurify/dist/purify.es.mjs
   /*! @license DOMPurify 3.4.16 | (c) Cure53 and other contributors | Released under the Apache license 2.0 and Mozilla Public License 2.0 | github.com/cure53/DOMPurify/blob/3.4.16/LICENSE */
   function _OverloadYield(e, d) {
@@ -4753,7 +4753,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       this._canRedo = false;
       this._composing = false;
       this._suggestionAbort = null;
-      this._suggestionRevision = 0;
       this._suggestionKey = null;
       this._suggestionContext = null;
       this._suggestionItems = [];
@@ -5102,8 +5101,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       this.toolbar.hidden = !this.toolbar.children.length;
       this._syncToolbarTabStops();
     }
+    _enabledToolbarButtons() {
+      return [...this.toolbar.querySelectorAll("button:not(:disabled)")].filter((button) => button instanceof HTMLButtonElement);
+    }
     _syncToolbarTabStops(preferred = null) {
-      const buttons = [...this.toolbar.querySelectorAll("button:not(:disabled)")].filter((button) => button instanceof HTMLButtonElement);
+      const buttons = this._enabledToolbarButtons();
       const current = buttons.find((button) => button.tabIndex === 0) ?? null;
       const target = preferred && buttons.includes(preferred) ? preferred : current ?? buttons[0] ?? null;
       for (const button of buttons)
@@ -5117,7 +5119,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     _onToolbarKeydown(event) {
       if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key))
         return;
-      const buttons = [...this.toolbar.querySelectorAll("button:not(:disabled)")].filter((button) => button instanceof HTMLButtonElement);
+      const buttons = this._enabledToolbarButtons();
       const current = event.target;
       if (!(current instanceof HTMLButtonElement) || !buttons.includes(current))
         return;
@@ -5422,7 +5424,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       return true;
     }
     async _updateSuggestion() {
-      const providers = this.options.suggestions ?? [];
+      const providers = this.options.suggestions;
       const reset = () => {
         this._suggestionKey = null;
         this._closeSuggestions();
@@ -5449,7 +5451,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const replaceRange = this.source.ownerDocument.createRange();
       replaceRange.setStart(range.startContainer, match.start);
       replaceRange.setEnd(range.startContainer, range.startOffset);
-      const revision = ++this._suggestionRevision;
       this._suggestionAbort?.abort();
       const controller = new AbortController;
       this._suggestionAbort = controller;
@@ -5467,7 +5468,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       }
       try {
         const items = await provider.search(match.query, context);
-        if (controller.signal.aborted || revision !== this._suggestionRevision)
+        if (controller.signal.aborted)
           return;
         this._suggestionAbort = null;
         if (!Array.isArray(items) || !items.length) {
@@ -5597,7 +5598,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     _closeSuggestions() {
       this._suggestionAbort?.abort();
       this._suggestionAbort = null;
-      this._suggestionRevision += 1;
       this._hideSuggestionRows();
     }
     _hideSuggestionRows() {
@@ -5692,7 +5692,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     constructor() {
       super();
       this._richText = null;
-      this._source = null;
       this._options = {};
       this._sourceObserver = null;
       this._revision = 0;
@@ -5722,7 +5721,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       this.#scheduleRebuild();
     }
     get source() {
-      return this._source || this.#findSource();
+      return this._richText?.source ?? this.#findSource();
     }
     get richText() {
       return this._richText;
@@ -5749,13 +5748,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       if (!source) {
         this._richText?.dispose();
         this._richText = null;
-        this._source = null;
         return null;
       }
-      if (this._richText && this._source === source)
+      if (this._richText?.source === source)
         return this._richText.refresh();
       this._richText?.dispose();
-      this._source = source;
       this._richText = new RichText(source, this.#resolvedOptions());
       const ready = this._readyResolvers.splice(0);
       for (const resolve of ready)
@@ -5776,7 +5773,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       this._sourceObserver = null;
       this._richText?.dispose();
       this._richText = null;
-      this._source = null;
     }
     #findSource() {
       for (const child of this.children) {
@@ -5789,7 +5785,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       if (this._sourceObserver)
         return;
       this._sourceObserver = new MutationObserver(() => {
-        if (this.isConnected && this.#findSource() !== this._source)
+        if (this.isConnected && this.#findSource() !== this._richText?.source)
           this.upgrade();
       });
       this._sourceObserver.observe(this, { childList: true });
@@ -5797,7 +5793,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     #resolvedOptions() {
       const attrs = {};
       if (this.hasAttribute("toolbar"))
-        attrs.toolbar = normalizeToolbar(this.getAttribute("toolbar"));
+        attrs.toolbar = this.getAttribute("toolbar") ?? undefined;
       return { ...attrs, ...this._options };
     }
     #scheduleRebuild() {
@@ -5808,10 +5804,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         this._rebuildQueued = false;
         if (!this.isConnected || !this._richText)
           return;
-        const source = this._source;
         this._richText.dispose();
         this._richText = null;
-        this._source = source;
         this.upgrade();
       });
     }

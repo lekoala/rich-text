@@ -146,7 +146,6 @@ export class RichText {
     this._composing = false;
     /** @type {AbortController | null} */
     this._suggestionAbort = null;
-    this._suggestionRevision = 0;
     /** @type {{ node: Node, start: number, query: string, provider: SuggestionProvider } | null} */
     this._suggestionKey = null;
     /** @type {ActiveSuggestionContext | null} */
@@ -551,11 +550,16 @@ export class RichText {
     this._syncToolbarTabStops();
   }
 
-  /** @param {HTMLButtonElement | null} [preferred] */
-  _syncToolbarTabStops(preferred = null) {
-    const buttons = [...this.toolbar.querySelectorAll("button:not(:disabled)")].filter(
+  /** @returns {HTMLButtonElement[]} */
+  _enabledToolbarButtons() {
+    return [...this.toolbar.querySelectorAll("button:not(:disabled)")].filter(
       (button) => button instanceof HTMLButtonElement,
     );
+  }
+
+  /** @param {HTMLButtonElement | null} [preferred] */
+  _syncToolbarTabStops(preferred = null) {
+    const buttons = this._enabledToolbarButtons();
     const current = buttons.find((button) => button.tabIndex === 0) ?? null;
     const target = preferred && buttons.includes(preferred) ? preferred : (current ?? buttons[0] ?? null);
     for (const button of buttons) button.tabIndex = button === target ? 0 : -1;
@@ -571,9 +575,7 @@ export class RichText {
   /** @param {KeyboardEvent} event */
   _onToolbarKeydown(event) {
     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
-    const buttons = [...this.toolbar.querySelectorAll("button:not(:disabled)")].filter(
-      (button) => button instanceof HTMLButtonElement,
-    );
+    const buttons = this._enabledToolbarButtons();
     const current = event.target;
     if (!(current instanceof HTMLButtonElement) || !buttons.includes(current)) return;
 
@@ -925,7 +927,7 @@ export class RichText {
   }
 
   async _updateSuggestion() {
-    const providers = this.options.suggestions ?? [];
+    const providers = this.options.suggestions;
     const reset = () => {
       this._suggestionKey = null;
       this._closeSuggestions();
@@ -965,7 +967,6 @@ export class RichText {
     replaceRange.setStart(range.startContainer, match.start);
     replaceRange.setEnd(range.startContainer, range.startOffset);
 
-    const revision = ++this._suggestionRevision;
     this._suggestionAbort?.abort();
     const controller = new AbortController();
     this._suggestionAbort = controller;
@@ -986,7 +987,7 @@ export class RichText {
 
     try {
       const items = await provider.search(match.query, context);
-      if (controller.signal.aborted || revision !== this._suggestionRevision) return;
+      if (controller.signal.aborted) return;
       this._suggestionAbort = null;
       if (!Array.isArray(items) || !items.length) {
         this._closeSuggestions();
@@ -1136,7 +1137,6 @@ export class RichText {
   _closeSuggestions() {
     this._suggestionAbort?.abort();
     this._suggestionAbort = null;
-    this._suggestionRevision += 1;
     this._hideSuggestionRows();
   }
 

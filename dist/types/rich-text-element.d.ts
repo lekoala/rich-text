@@ -9,8 +9,6 @@ export declare class RichTextElement extends HTMLElement {
     #private;
     /** @type {RichText | null} */
     _richText: RichText | null;
-    /** @type {HTMLTextAreaElement | null} */
-    _source: HTMLTextAreaElement | null;
     /** @type {RichTextOptions} */
     _options: RichTextOptions;
     /** @type {MutationObserver | null} */

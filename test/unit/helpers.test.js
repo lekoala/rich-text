@@ -31,7 +31,6 @@ describe("matchSuggestionText", () => {
       trigger: "@",
       query: "mar",
       start: 6,
-      end: 10,
     });
   });
 

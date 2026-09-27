@@ -22,7 +22,6 @@ const TOOLBAR_COMMANDS = new Set(DEFAULT_TOOLBAR.filter((entry) => entry !== TOO
  * @property {string} trigger
  * @property {string} query
  * @property {number} start
- * @property {number} end
  */
 
 /**
@@ -90,7 +89,7 @@ export function matchSuggestionText(textBeforeCaret, triggers) {
     if (/\s/.test(query)) continue;
 
     if (!best || start > best.start || (start === best.start && trigger.length > best.trigger.length)) {
-      best = { trigger, query, start, end: textBeforeCaret.length };
+      best = { trigger, query, start };
     }
   }
 
@@ -122,7 +121,7 @@ export function isSafeHref(href) {
  * @returns {boolean}
  */
 export function isEditorEmpty(root) {
-  if (root.querySelector("[data-rt-mention], img")) return false;
+  if (root.querySelector("[data-rt-mention]")) return false;
   return !(root.textContent ?? "").replace(/[\s\u00a0\u200b]+/g, "").length;
 }
 
