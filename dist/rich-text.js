@@ -1,4 +1,4 @@
-/*** @lekoala/rich-text v0.1.0 - https://github.com/lekoala/rich-text ***/
+/*** @lekoala/rich-text v0.2.0 - https://github.com/lekoala/rich-text ***/
 (() => {
   // node_modules/@lekoala/floating/src/floating.js
   function crossAxisFor(side) {

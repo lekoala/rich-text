@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
 - Form reset from a real click now resets the editor on the first click (the sync ran before the controls were reset).
 - Hovering a pressed toolbar button overlays `--rt-button-hover` instead of replacing its background, so the pressed
