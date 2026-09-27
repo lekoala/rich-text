@@ -30,13 +30,12 @@
   <style id="bridge">
     /* ================================================================
        THEME BRIDGE — the whole skin in one block.
-       --rt-* tokens are fed from Actual tokens. The suggestion popover is appended to <body>,
-       so it needs the tokens on itself: it does not inherit from the editor.
+       --rt-* tokens are fed from Actual tokens. The suggestion popover is a child of the shell,
+       so it inherits them like the rest of the editor.
        ================================================================ */
 
     /* 1. Tokens */
-    .actual-rich-text .rt-shell,
-    .rt-suggestions {
+    .actual-rich-text .rt-shell {
       --rt-bg: var(--surface);
       --rt-fg: var(--text);
       --rt-border: var(--form-invalid-border, var(--control-border, var(--border)));
@@ -314,14 +313,14 @@
     const note = document.querySelector("#note");
     const output = document.querySelector("#note-output");
     const syncValidity = () => {
-      if (noteForm.classList.contains("was-validated")) note.setAttribute("aria-invalid", String(!note.checkValidity()));
+      if (noteForm.classList.contains("was-validated")) note.setAttribute("aria-invalid", String(!note.validity.valid));
     };
     note.addEventListener("input", syncValidity);
     noteForm.addEventListener("submit", (event) => {
       event.preventDefault();
       noteForm.classList.add("was-validated");
       syncValidity();
-      if (!noteForm.checkValidity()) {
+      if (!note.validity.valid) {
         document.querySelector("#note-editor").richText?.focus();
         output.textContent = '(invalid: the textarea value is "")';
         return;

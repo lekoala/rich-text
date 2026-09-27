@@ -8,7 +8,7 @@ import {
   normalizeToolbar,
   toolbarGroups,
 } from "./helpers.js";
-import { createSanitizeToDOMFragment } from "./sanitize.js";
+import { sanitizeToDOMFragment } from "./sanitize.js";
 
 /**
  * @typedef {Object} MentionInsert
@@ -56,7 +56,6 @@ import { createSanitizeToDOMFragment } from "./sanitize.js";
  * @property {Record<string, ToolbarButtonOverride>} [buttons] Per-command label/content overrides.
  * @property {string} [toolbarLabel] Accessible name of the toolbar. Defaults to "Formatting".
  * @property {SuggestionProvider[]} [suggestions]
- * @property {(html: string, editor: Squire) => DocumentFragment} [sanitizeToDOMFragment]
  * @property {(context: { href: string, text: string, richText: RichText }) => string | null | Promise<string | null>} [requestLink]
  */
 
@@ -117,7 +116,6 @@ export class RichText {
      * buttons: Record<string, ToolbarButtonOverride>,
      * toolbarLabel: string,
      * suggestions: SuggestionProvider[],
-     * sanitizeToDOMFragment: (html: string, editor: Squire) => DocumentFragment,
      * requestLink: (context: { href: string, text: string, richText: RichText }) => string | null | Promise<string | null>
      * }} */
     this.options = {
@@ -125,13 +123,17 @@ export class RichText {
       buttons: options.buttons ?? {},
       toolbarLabel: options.toolbarLabel ?? "Formatting",
       suggestions: options.suggestions ?? [],
-      sanitizeToDOMFragment: options.sanitizeToDOMFragment ?? createSanitizeToDOMFragment(),
       requestLink: options.requestLink ?? defaultLinkRequest,
     };
 
     this._controller = new AbortController();
+    /** @type {AbortController | null} */
+    this._contextController = null;
+    /** @type {MutationObserver | null} */
+    this._fieldsetObserver = null;
     /** @type {HTMLFormElement | null} */
     this._form = null;
+    this._linkRequest = 0;
     this._disposed = false;
     this._sourceWasHidden = source.hasAttribute("hidden");
     /** @type {{ label: HTMLLabelElement, id: string }[]} */
@@ -178,11 +180,10 @@ export class RichText {
     this._copyAccessibility();
 
     /** @type {Squire} */
-    this.squire = new Squire(this.surface, {
-      blockTag: "P",
-      sanitizeToDOMFragment: this.options.sanitizeToDOMFragment,
-    });
+    // The sanitizer is not an option: a replacement would bypass the mandatory policy.
+    this.squire = new Squire(this.surface, { blockTag: "P", sanitizeToDOMFragment });
     this._restrictShortcuts();
+    this._restrictLinkDetection();
 
     this.suggestionPopup = this._createSuggestionPopup();
     this._bind();
@@ -211,6 +212,19 @@ export class RichText {
   focus() {
     if (this._disposed) return;
     this.squire.focus();
+  }
+
+  /**
+   * Re-read the textarea's document context (form, labels, ancestor fieldsets) after it moved in the DOM.
+   * `<rich-text>` calls this when it is reconnected.
+   * @returns {this}
+   */
+  refresh() {
+    if (this._disposed) return this;
+    this._bindContext();
+    this._copyAccessibility();
+    this._syncEditableState();
+    return this;
   }
 
   /** Pull an externally changed textarea value into Squire. */
@@ -267,7 +281,9 @@ export class RichText {
     this._suggestionAbort?.abort();
     this._stopSuggestionAutoUpdate?.();
     this._controller.abort();
+    this._contextController?.abort();
     this._sourceObserver?.disconnect();
+    this._fieldsetObserver?.disconnect();
     this.squire.destroy();
     this.suggestionPopup.remove();
     this.shell.remove();
@@ -301,11 +317,6 @@ export class RichText {
     for (const type of ["input", "change", "invalid"]) {
       this.source.addEventListener(type, this, { signal });
     }
-    this._form = this.source.form;
-    this._form?.addEventListener("reset", this, { signal });
-    for (const label of this.source.labels ?? []) {
-      label.addEventListener("click", this, { signal });
-    }
     // Outside pointerdown closes suggestions; pointerdown on a suggestion picks it without moving focus.
     this.source.ownerDocument.addEventListener("pointerdown", this, { capture: true, signal });
 
@@ -324,14 +335,34 @@ export class RichText {
         "aria-invalid",
         "aria-describedby",
         "aria-label",
+        "aria-labelledby",
         "placeholder",
         "spellcheck",
         "autocapitalize",
       ],
     });
+    this._bindContext();
+  }
+
+  /** Subscriptions that depend on where the textarea sits: its form, its labels, its ancestor fieldsets. */
+  _bindContext() {
+    this._contextController?.abort();
+    this._contextController = new AbortController();
+    const signal = this._contextController.signal;
+
+    this._form = this.source.form;
+    this._form?.addEventListener("reset", this, { signal });
+    for (const label of this.source.labels ?? []) {
+      label.addEventListener("click", this, { signal });
+    }
+
     // `<fieldset disabled>` disables the textarea without touching its own attributes.
+    this._fieldsetObserver?.disconnect();
+    this._fieldsetObserver = new MutationObserver(() => {
+      if (!this._disposed) this._syncEditableState();
+    });
     for (let fieldset = this.source.parentElement?.closest("fieldset"); fieldset; ) {
-      this._sourceObserver.observe(fieldset, { attributes: true, attributeFilter: ["disabled"] });
+      this._fieldsetObserver.observe(fieldset, { attributes: true, attributeFilter: ["disabled"] });
       fieldset = fieldset.parentElement?.closest("fieldset");
     }
   }
@@ -604,16 +635,25 @@ export class RichText {
 
   async _toggleLink() {
     const editor = this.squire;
-    const range = editor.getSelection();
-    const node =
-      range.startContainer instanceof Element ? range.startContainer : range.startContainer.parentElement;
+    // A live range: it follows edits around it, and its containers change if its own nodes are removed.
+    const range = editor.getSelection().cloneRange();
+    const { startContainer, endContainer } = range;
+    const node = startContainer instanceof Element ? startContainer : startContainer.parentElement;
     const link = node?.closest("a") ?? null;
     const href = link?.getAttribute("href") ?? "";
     const text = editor.getSelectedText();
+    const request = ++this._linkRequest;
     const next = await this.options.requestLink({ href, text, richText: this });
-    if (next == null || this._disposed) return;
+
+    // The answer applies to the selection it was asked for, or not at all: it is dropped after dispose, a
+    // newer request, a content replacement (setHTML/sync/reset), a readonly/disabled switch, or an edit
+    // that removed the targeted nodes.
+    if (next == null || this._disposed || request !== this._linkRequest || !this.editable) return;
+    if (range.startContainer !== startContainer || range.endContainer !== endContainer) return;
+    if (!this.surface.contains(startContainer) || !this.surface.contains(endContainer)) return;
 
     editor.focus();
+    editor.setSelection(range);
     const value = next.trim();
     if (value && !isSafeHref(value)) {
       this.source.dispatchEvent(
@@ -627,7 +667,7 @@ export class RichText {
 
     // Squire's link commands act on the selection: from a bare caret inside a link, makeLink would insert
     // the URL as new text and removeLink would do nothing. Edit the whole existing link instead.
-    if (link?.isConnected && this.surface.contains(link) && editor.getSelection().collapsed) {
+    if (link?.isConnected && this.surface.contains(link) && range.collapsed) {
       const whole = this.source.ownerDocument.createRange();
       whole.selectNodeContents(link);
       editor.setSelection(whole);
@@ -652,6 +692,7 @@ export class RichText {
 
   /** @param {string} html */
   _setEditorHTML(html) {
+    this._linkRequest += 1;
     this._settingEditor = true;
     try {
       this.squire.setHTML(String(html ?? ""));
@@ -697,15 +738,18 @@ export class RichText {
 
   _copyAccessibility() {
     const source = this.source;
-    const labelledBy = [];
+    // As on the native control, an authored aria-labelledby wins over <label> elements.
+    const labelledBy = source.getAttribute("aria-labelledby")?.split(/\s+/).filter(Boolean) ?? [];
 
-    for (const label of source.labels ?? []) {
-      if (!label.id) {
-        const id = `rt-label-${++uid}`;
-        label.id = id;
-        this._generatedLabelIds.push({ label, id });
+    if (!labelledBy.length) {
+      for (const label of source.labels ?? []) {
+        if (!label.id) {
+          const id = `rt-label-${++uid}`;
+          label.id = id;
+          this._generatedLabelIds.push({ label, id });
+        }
+        labelledBy.push(label.id);
       }
-      labelledBy.push(label.id);
     }
 
     this._setSurfaceAttributes({
@@ -766,7 +810,23 @@ export class RichText {
     }
   }
 
-  /** @returns {HTMLDivElement} */
+  /**
+   * Squire auto-links typed and pasted URLs without going through the sanitizer, and its pattern also
+   * matches `ftp://`. Restrict it to http(s)/www/bare domains and e-mail addresses (mailto:), which are all
+   * inside the link policy. An unrecognised pattern (a future Squire) disables detection instead.
+   */
+  _restrictLinkDetection() {
+    const pattern = this.squire.linkRegExp;
+    const source = pattern.source.replace("(?:ht|f)tps?", "https?");
+    this.squire.linkRegExp = source === pattern.source ? /(?!)/ : new RegExp(source, pattern.flags);
+  }
+
+  /**
+   * The popover lives in the shell, outside the Squire surface: it inherits the instance's theme tokens and
+   * stays in the interactive subtree of a modal `<dialog>`. As a popover it renders in the top layer, so the
+   * shell's clipping does not apply.
+   * @returns {HTMLDivElement}
+   */
   _createSuggestionPopup() {
     const doc = this.source.ownerDocument;
     const popup = doc.createElement("div");
@@ -775,7 +835,7 @@ export class RichText {
     popup.setAttribute("role", "listbox");
     popup.hidden = true;
     if ("showPopover" in popup) popup.setAttribute("popover", "manual");
-    doc.body.append(popup);
+    this.shell.append(popup);
 
     if (this.options.suggestions.length) {
       this._setSurfaceAttributes({
@@ -870,6 +930,8 @@ export class RichText {
 
     const range = this.squire.getSelection();
     if (!range.collapsed || !(range.startContainer instanceof Text)) return reset();
+    // A mention label is not text the user is typing.
+    if (closestMention(range.startContainer, this.surface)) return reset();
 
     const textBeforeCaret = range.startContainer.data.slice(0, range.startOffset);
     const match = matchSuggestionText(
@@ -1061,8 +1123,10 @@ export class RichText {
     span.setAttribute("contenteditable", "false");
     span.textContent = label;
 
+    // Squire trims a trailing ASCII space from inserted HTML; without a separator at the end of a block the
+    // caret would land inside the mention label. A no-break space survives, as Squire does for typed spaces.
     this.squire.setSelection(range);
-    this.squire.insertHTML(`${span.outerHTML} `);
+    this.squire.insertHTML(`${span.outerHTML} `);
   }
 
   _closeSuggestions() {

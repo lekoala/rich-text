@@ -59,7 +59,6 @@ export type RichTextOptions = {
      */
     toolbarLabel?: string;
     suggestions?: SuggestionProvider[];
-    sanitizeToDOMFragment?: (html: string, editor: Squire) => DocumentFragment;
     requestLink?: (context: {
         href: string;
         text: string;
@@ -76,7 +75,6 @@ export declare class RichText {
      * buttons: Record<string, ToolbarButtonOverride>,
      * toolbarLabel: string,
      * suggestions: SuggestionProvider[],
-     * sanitizeToDOMFragment: (html: string, editor: Squire) => DocumentFragment,
      * requestLink: (context: { href: string, text: string, richText: RichText }) => string | null | Promise<string | null>
      * }} */
     options: {
@@ -84,7 +82,6 @@ export declare class RichText {
         buttons: Record<string, ToolbarButtonOverride>;
         toolbarLabel: string;
         suggestions: SuggestionProvider[];
-        sanitizeToDOMFragment: (html: string, editor: Squire) => DocumentFragment;
         requestLink: (context: {
             href: string;
             text: string;
@@ -92,8 +89,13 @@ export declare class RichText {
         }) => string | null | Promise<string | null>;
     };
     _controller: AbortController;
+    /** @type {AbortController | null} */
+    _contextController: AbortController | null;
+    /** @type {MutationObserver | null} */
+    _fieldsetObserver: MutationObserver | null;
     /** @type {HTMLFormElement | null} */
     _form: HTMLFormElement | null;
+    _linkRequest: number;
     _disposed: boolean;
     _sourceWasHidden: boolean;
     /** @type {{ label: HTMLLabelElement, id: string }[]} */
@@ -149,6 +151,12 @@ export declare class RichText {
     /** @returns {boolean} */
     get editable(): boolean;
     focus(): void;
+    /**
+     * Re-read the textarea's document context (form, labels, ancestor fieldsets) after it moved in the DOM.
+     * `<rich-text>` calls this when it is reconnected.
+     * @returns {this}
+     */
+    refresh(): this;
     /** Pull an externally changed textarea value into Squire. */
     sync(): this;
     /**
@@ -180,6 +188,8 @@ export declare class RichText {
     /** Tear down generated UI and restore the source textarea. Safe to call more than once. */
     dispose(): void;
     _bind(): void;
+    /** Subscriptions that depend on where the textarea sits: its form, its labels, its ancestor fieldsets. */
+    _bindContext(): void;
     /**
      * Single entry point for DOM and Squire listeners. Squire events are fresh CustomEvents that are never
      * dispatched, so they are the only ones without a currentTarget.
@@ -234,7 +244,18 @@ export declare class RichText {
     _setSurfaceAttributes(attributes: Record<string, string | null>): void;
     /** Squire ships shortcuts for tags outside the default vocabulary (underline, strike, sub/sup, code). */
     _restrictShortcuts(): void;
-    /** @returns {HTMLDivElement} */
+    /**
+     * Squire auto-links typed and pasted URLs without going through the sanitizer, and its pattern also
+     * matches `ftp://`. Restrict it to http(s)/www/bare domains and e-mail addresses (mailto:), which are all
+     * inside the link policy. An unrecognised pattern (a future Squire) disables detection instead.
+     */
+    _restrictLinkDetection(): void;
+    /**
+     * The popover lives in the shell, outside the Squire surface: it inherits the instance's theme tokens and
+     * stays in the interactive subtree of a modal `<dialog>`. As a popover it renders in the top layer, so the
+     * shell's clipping does not apply.
+     * @returns {HTMLDivElement}
+     */
     _createSuggestionPopup(): HTMLDivElement;
     /** @param {KeyboardEvent} event */
     _onEditorKeydown(event: KeyboardEvent): void;

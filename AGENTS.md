@@ -11,7 +11,9 @@ Build a small, opinionated rich-text form control around Squire. Do not build a 
   copy Squire internals into this package.
 - `<rich-text>` is a declarative lifecycle boundary only. It has no Shadow DOM and is not form-associated.
 - Importing normal source modules never registers a custom element. `src/define.js` is the side-effect entry.
-- Sanitisation is mandatory. Unsafe raw HTML must never be inserted through a bypass path.
+- Sanitisation is mandatory. Unsafe raw HTML must never be inserted through a bypass path. The sanitizer policy is
+  internal: it is not an option, not replaceable and not exported. Squire's URL auto-detection is constrained to the
+  link policy.
 - The default HTML vocabulary stays deliberately small. Images, tables, arbitrary styles/fonts/colors, embeds and
   attachments are not default editor features.
 - A structured mention is an atomic inline entity with stable identity:
@@ -26,8 +28,11 @@ Build a small, opinionated rich-text form control around Squire. Do not build a 
 - `input` mirrors user changes to the textarea; `change` is dispatched after a focus session if the value changed.
 - An editor that is visually empty serializes to the empty string so native `required` semantics remain useful.
 - `form.reset()` rehydrates the editor from the native textarea reset value.
-- Anything generated outside the component subtree (the suggestion popover, generated label ids) is removed/restored by
-  `dispose()`.
+- The suggestion popover is a child of the shell (outside the Squire surface), never of `<body>`: it must stay inside
+  a modal `<dialog>`'s interactive subtree and inherit per-instance theme tokens.
+- Anything generated outside the component subtree (generated label ids) is removed/restored by `dispose()`.
+- Async answers (link dialog, suggestion search) apply only to the context they were requested for; they are dropped
+  after dispose, a newer request, content replacement or a switch to readonly/disabled.
 - `disabled` and `readonly` remain authored on the textarea and are mirrored to the editor UI.
 - Links accept only relative/hash URLs and http/https/mailto/tel schemes by default.
 

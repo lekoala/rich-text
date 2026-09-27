@@ -2,12 +2,8 @@ rich-text {
   display: block;
 }
 
-/*
- * Tokens. The suggestion popover is appended to <body> (outside the shell), so every token is declared on
- * both roots: a theme bridge must override them on `.rt-shell` and `.rt-suggestions`.
- */
-.rt-shell,
-.rt-suggestions {
+/* Tokens. The suggestion popover is a child of the shell, so it inherits them too. */
+.rt-shell {
   --rt-bg: Canvas;
   --rt-fg: CanvasText;
   --rt-border: color-mix(in srgb, CanvasText 22%, Canvas);
@@ -171,9 +167,10 @@ rich-text {
   -webkit-box-decoration-break: clone;
 }
 
-/* Suggestions (appended to <body>) */
+/* Suggestions: a popover (top layer) positioned at the caret. */
 
 .rt-suggestions {
+  position: fixed;
   z-index: 1000;
   inline-size: min(20rem, calc(100vw - 2rem));
   max-block-size: min(18rem, var(--available-height, 18rem));
@@ -188,7 +185,6 @@ rich-text {
 }
 
 .rt-suggestions[popover] {
-  position: fixed;
   inset: auto;
 }
 

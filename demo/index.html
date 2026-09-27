@@ -220,7 +220,8 @@
     };
     note.addEventListener("richtext:invalid", () => setInvalid(true));
     note.addEventListener("input", () => {
-      if (note.hasAttribute("aria-invalid")) setInvalid(!note.checkValidity());
+      // validity.valid is a silent read: checkValidity() would fire `invalid`, which focuses the editor.
+      if (note.hasAttribute("aria-invalid")) setInvalid(!note.validity.valid);
     });
     form.addEventListener("submit", (event) => {
       event.preventDefault();

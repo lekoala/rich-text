@@ -96,7 +96,8 @@ export class RichTextElement extends HTMLElement {
       return null;
     }
 
-    if (this._richText && this._source === source) return this._richText;
+    // Same textarea, possibly moved to another form/fieldset: re-read its document context.
+    if (this._richText && this._source === source) return this._richText.refresh();
     this._richText?.dispose();
 
     this._source = source;

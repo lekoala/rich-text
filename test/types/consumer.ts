@@ -1,6 +1,7 @@
 import {
+  DEFAULT_TOOLBAR,
   defineRichText,
-  matchSuggestionText,
+  isSafeHref,
   RichText,
   type RichTextElement,
   type RichTextOptions,
@@ -8,7 +9,7 @@ import {
 
 const textarea = document.createElement("textarea");
 const options: RichTextOptions = {
-  toolbar: ["bold", "italic"],
+  toolbar: [...DEFAULT_TOOLBAR],
   suggestions: [
     {
       trigger: "@",
@@ -18,12 +19,13 @@ const options: RichTextOptions = {
       getLabel: (item) => item.label,
     },
   ],
+  requestLink: async ({ href }) => (isSafeHref(href) ? href : null),
 };
 const editor = new RichText(textarea, options);
 editor.getMentions();
+editor.refresh().sync();
 editor.dispose();
 
 const element: RichTextElement = document.createElement("rich-text") as RichTextElement;
 element.configure(options);
 defineRichText();
-matchSuggestionText("@a", ["@"])?.query;

@@ -16,8 +16,8 @@ editing, paste normalisation and undo/redo. `@lekoala/rich-text` owns the produc
 
 ## Status
 
-Prototype / pre-0.1. The main thing to validate before a first release is the atomic mention contract in the
-Chromium + Firefox + WebKit browser matrix, especially Backspace/Delete, selection boundaries, IME and paste.
+0.1 — first release. Every editing behaviour (mentions, selection, paste, IME, focus, form integration) is covered
+by real-browser tests in Chromium, Firefox and WebKit. The API may still change before 1.0.
 
 ## Install
 
@@ -93,8 +93,11 @@ box.options = {
 A selection is stored as ordinary sanitized HTML:
 
 ```html
-<span data-rt-mention="user" data-id="abc123" contenteditable="false">@Alice Martin</span>
+<span data-rt-mention="user" data-id="abc123" contenteditable="false">@Alice Martin</span>&nbsp;
 ```
+
+The inserted mention is followed by a no-break space, so the caret always lands after it (Squire trims a plain
+trailing space at the end of a block).
 
 The component treats the mention atomically: Backspace/Delete next to it (including across inline wrappers such
 as `<b>` and Squire's zero-width caret placeholders) removes it whole and emits `richtext:mentionremove`, and a
@@ -128,7 +131,8 @@ Async suggestion searches are abortable and stale responses are ignored.
 
 ## Security
 
-Sanitisation is mandatory. The default allowlist is intentionally narrow:
+Sanitisation is mandatory and not configurable: there is no option to replace or extend the sanitizer, and it is
+not exported. The allowlist is intentionally narrow:
 
 ```text
 p br b strong i em ul ol li blockquote a
@@ -141,7 +145,9 @@ re-enable editing inside a readonly editor).
 
 Links follow one policy everywhere (initial value, paste, drop, suggestion HTML and the toolbar): relative/hash
 URLs and `http:`, `https:`, `mailto:`, `tel:` only. A link with a missing or refused `href` is unwrapped to its
-text. The toolbar reports a refused URL with `richtext:linkerror`.
+text. The toolbar reports a refused URL with `richtext:linkerror`. Squire's automatic linking of typed/pasted URLs
+is restricted to the same policy (`http(s)`, `www.`/bare domains, e-mail addresses as `mailto:`); `ftp://` stays
+plain text.
 
 Squire's built-in shortcuts for tags outside the vocabulary (underline, strikethrough, sub/superscript, code)
 are disabled so keyboard input cannot produce HTML that the sanitizer would drop on the next load.
@@ -158,7 +164,17 @@ rendering untrusted content.
 - an editor containing only Squire's empty block serializes to `""`, so native `required` keeps working;
 - native `invalid` emits `richtext:invalid`; the editor takes focus when it is the form's first invalid control
   (the hidden textarea cannot show the native validation bubble, so render your own message on that event);
-- external code that changes `textarea.value` can call `richText.sync()` (or dispatch `input`/`change`).
+- external code that changes `textarea.value` can call `richText.sync()` (or dispatch `input`/`change`);
+- `<rich-text>` follows its textarea when it is moved to another form or fieldset; a bare `RichText` whose
+  textarea moved calls `richText.refresh()`.
+
+`form.checkValidity()` and `textarea.checkValidity()` fire `invalid` just like `reportValidity()`, and the
+platform gives no way to tell them apart, so they also move focus to the editor when it is the first invalid
+control. For a silent check (live validation while typing), read `textarea.validity.valid` instead.
+
+The link dialog is asynchronous (`requestLink` may return a Promise). Its answer is applied to the selection it
+was asked for, and dropped if, meanwhile, the editor became readonly/disabled, its content was replaced
+(`setHTML`, `sync`, reset), another link request started or the targeted text was removed.
 
 ## Toolbar
 
@@ -190,8 +206,9 @@ the editor, so the selection survives.
 
 `rich-text.css` is driven by `--rt-*` custom properties (colours, `--rt-focus-width`, `--rt-min-height`,
 `--rt-max-height`, `--rt-font-size`, button pressed/hover, disabled, link, quote, mention and suggestion tokens).
-The suggestion popover is appended to `<body>`, outside the editor, so the tokens are declared on both
-`.rt-shell` and `.rt-suggestions`: a theme must override them on both.
+The suggestion popover is a child of `.rt-shell` (rendered in the top layer), so it inherits the tokens: a theme
+overrides them once, on `.rt-shell` or any ancestor. This also keeps suggestions clickable inside a modal
+`<dialog>`.
 
 State hooks: `.rt-shell[data-disabled]`, `.rt-shell[data-readonly]`, `.rt-editor[aria-invalid]` (mirrored from the
 textarea), `.rt-editor[data-empty="true"]`, `.rt-button[aria-pressed="true"]`,
@@ -204,8 +221,7 @@ The component stays UI-framework agnostic; Actual skins it through a token bridg
 link editor). The core of it:
 
 ```css
-.actual-rich-text .rt-shell,
-.rt-suggestions {
+.actual-rich-text .rt-shell {
   --rt-bg: var(--surface);
   --rt-fg: var(--text);
   --rt-border: var(--form-invalid-border, var(--control-border, var(--border)));
@@ -238,6 +254,38 @@ link editor). The core of it:
 Actual still owns presentation and composer chrome (attachments, send, Ctrl/Cmd+Enter); this package owns
 rich-text behaviour. Note that Actual's own design notes treat `@`/`/` suggestions as a plain-textarea
 improvement; here they are part of the rich editor because mentions are structured, atomic entities.
+
+## API
+
+```js
+import { RichText, RichTextElement, defineRichText, isSafeHref, DEFAULT_TOOLBAR } from "@lekoala/rich-text";
+```
+
+`new RichText(textarea, options)` enhances a textarea without the custom element; `<rich-text>` does the same
+declaratively and exposes the instance as `element.richText` (or `await element.whenReady()`).
+
+| Option          | Default           | Description                                                                         |
+| --------------- | ----------------- | ----------------------------------------------------------------------------------- |
+| `toolbar`       | `DEFAULT_TOOLBAR` | Commands in order, `\|` separates groups, `"none"` hides the toolbar.               |
+| `buttons`       | `{}`              | Per-command `{ label, content }` overrides.                                         |
+| `toolbarLabel`  | `"Formatting"`    | Accessible name of the toolbar.                                                     |
+| `suggestions`   | `[]`              | Suggestion providers (`trigger`, `search`, `kind`, `getLabel`, `getId`, `renderItem`, `insert`, `minChars`, `mentionType`). |
+| `requestLink`   | `window.prompt`   | `({ href, text, richText }) => string \| null \| Promise<…>`; `""` removes the link. |
+
+| Method            | Description                                                                 |
+| ----------------- | --------------------------------------------------------------------------- |
+| `getHTML()`       | The serialized value (same as `textarea.value`).                            |
+| `setHTML(html)`   | Replace the content (sanitized) and update the textarea without `input`.   |
+| `sync()`          | Pull an externally changed `textarea.value` into the editor.               |
+| `refresh()`       | Re-read form, labels, fieldsets and states after the textarea moved.       |
+| `getMentions()`   | `{ type, id, label }[]` in document order.                                 |
+| `insertMention()` | Insert `{ id, label, type? }` at the selection.                            |
+| `focus()`         | Focus the editor.                                                          |
+| `dispose()`       | Remove the generated UI and listeners, restore the textarea. Idempotent.   |
+
+Events are dispatched on the textarea and bubble: native `input`/`change`, and `richtext:invalid`,
+`richtext:linkerror`, `richtext:mentionselect`, `richtext:mentionremove`, `richtext:suggestionerror`. The custom
+element dispatches `richtext:ready`.
 
 ## Demos
 

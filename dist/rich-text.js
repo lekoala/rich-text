@@ -1,4 +1,4 @@
-/*** @lekoala/rich-text v0.0.1 - https://github.com/lekoala/rich-text ***/
+/*** @lekoala/rich-text v0.1.0 - https://github.com/lekoala/rich-text ***/
 (() => {
   // src/helpers.js
   var TOOLBAR_SEPARATOR = "|";
@@ -4651,64 +4651,46 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
   var purify_default = createDOMPurify();
 
   // src/sanitize.js
-  var DEFAULT_ALLOWED_TAGS = [
-    "p",
-    "br",
-    "b",
-    "strong",
-    "i",
-    "em",
-    "ul",
-    "ol",
-    "li",
-    "blockquote",
-    "a",
-    "span"
-  ];
-  var DEFAULT_ALLOWED_ATTRIBUTES = ["href", "title", "data-rt-mention", "data-id", "contenteditable"];
+  var ALLOWED_TAGS = ["p", "br", "b", "strong", "i", "em", "ul", "ol", "li", "blockquote", "a", "span"];
+  var ALLOWED_ATTRIBUTES = ["href", "title", "data-rt-mention", "data-id", "contenteditable"];
   var MENTION_ATTRIBUTES = ["data-rt-mention", "data-id", "contenteditable"];
-  function createSanitizeToDOMFragment(options = {}) {
-    const allowedTags = options.allowedTags ?? DEFAULT_ALLOWED_TAGS;
-    const allowedAttributes = options.allowedAttributes ?? DEFAULT_ALLOWED_ATTRIBUTES;
-    return (html, editor) => {
-      const root = editor.getRoot();
-      const doc = root.ownerDocument;
-      const sanitized = purify_default.sanitize(html, {
-        ALLOWED_TAGS: allowedTags,
-        ALLOWED_ATTR: allowedAttributes,
-        ALLOW_DATA_ATTR: false,
-        RETURN_DOM_FRAGMENT: true
-      });
-      const fragment = sanitized.ownerDocument === doc ? sanitized : doc.importNode(sanitized, true);
-      for (const span of [...fragment.querySelectorAll("span")]) {
-        const id = span.getAttribute("data-id")?.trim() ?? "";
-        const type = span.getAttribute("data-rt-mention")?.trim() ?? "";
-        const label = span.textContent?.trim() ?? "";
-        if (!span.hasAttribute("data-rt-mention") || !id || !type || !label) {
-          span.replaceWith(...span.childNodes);
-          continue;
-        }
-        for (const attr of [...span.attributes]) {
-          if (!MENTION_ATTRIBUTES.includes(attr.name))
-            span.removeAttribute(attr.name);
-        }
-        span.setAttribute("data-rt-mention", type);
-        span.setAttribute("data-id", id);
-        span.setAttribute("contenteditable", "false");
-        span.textContent = label;
+  function sanitizeToDOMFragment(html, editor) {
+    const doc = editor.getRoot().ownerDocument;
+    const sanitized = purify_default.sanitize(html, {
+      ALLOWED_TAGS,
+      ALLOWED_ATTR: ALLOWED_ATTRIBUTES,
+      ALLOW_DATA_ATTR: false,
+      RETURN_DOM_FRAGMENT: true
+    });
+    const fragment = sanitized.ownerDocument === doc ? sanitized : doc.importNode(sanitized, true);
+    for (const span of [...fragment.querySelectorAll("span")]) {
+      const id = span.getAttribute("data-id")?.trim() ?? "";
+      const type = span.getAttribute("data-rt-mention")?.trim() ?? "";
+      const label = span.textContent?.trim() ?? "";
+      if (!span.hasAttribute("data-rt-mention") || !id || !type || !label) {
+        span.replaceWith(...span.childNodes);
+        continue;
       }
-      for (const element of fragment.querySelectorAll("[data-rt-mention], [data-id], [contenteditable]")) {
-        if (element.localName === "span" && element.hasAttribute("data-rt-mention"))
-          continue;
-        for (const name of MENTION_ATTRIBUTES)
-          element.removeAttribute(name);
+      for (const attr of [...span.attributes]) {
+        if (!MENTION_ATTRIBUTES.includes(attr.name))
+          span.removeAttribute(attr.name);
       }
-      for (const link of [...fragment.querySelectorAll("a")]) {
-        if (!isSafeHref(link.getAttribute("href") ?? ""))
-          link.replaceWith(...link.childNodes);
-      }
-      return fragment;
-    };
+      span.setAttribute("data-rt-mention", type);
+      span.setAttribute("data-id", id);
+      span.setAttribute("contenteditable", "false");
+      span.textContent = label;
+    }
+    for (const element of fragment.querySelectorAll("[data-rt-mention], [data-id], [contenteditable]")) {
+      if (element.localName === "span" && element.hasAttribute("data-rt-mention"))
+        continue;
+      for (const name of MENTION_ATTRIBUTES)
+        element.removeAttribute(name);
+    }
+    for (const link of [...fragment.querySelectorAll("a")]) {
+      if (!isSafeHref(link.getAttribute("href") ?? ""))
+        link.replaceWith(...link.childNodes);
+    }
+    return fragment;
   }
 
   // src/rich-text.js
@@ -4754,11 +4736,13 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         buttons: options.buttons ?? {},
         toolbarLabel: options.toolbarLabel ?? "Formatting",
         suggestions: options.suggestions ?? [],
-        sanitizeToDOMFragment: options.sanitizeToDOMFragment ?? createSanitizeToDOMFragment(),
         requestLink: options.requestLink ?? defaultLinkRequest
       };
       this._controller = new AbortController;
+      this._contextController = null;
+      this._fieldsetObserver = null;
       this._form = null;
+      this._linkRequest = 0;
       this._disposed = false;
       this._sourceWasHidden = source.hasAttribute("hidden");
       this._generatedLabelIds = [];
@@ -4791,11 +4775,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       source.hidden = true;
       this._buildToolbar();
       this._copyAccessibility();
-      this.squire = new Ji(this.surface, {
-        blockTag: "P",
-        sanitizeToDOMFragment: this.options.sanitizeToDOMFragment
-      });
+      this.squire = new Ji(this.surface, { blockTag: "P", sanitizeToDOMFragment });
       this._restrictShortcuts();
+      this._restrictLinkDetection();
       this.suggestionPopup = this._createSuggestionPopup();
       this._bind();
       this._setEditorHTML(source.value);
@@ -4814,6 +4796,14 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       if (this._disposed)
         return;
       this.squire.focus();
+    }
+    refresh() {
+      if (this._disposed)
+        return this;
+      this._bindContext();
+      this._copyAccessibility();
+      this._syncEditableState();
+      return this;
     }
     sync() {
       if (this._disposed)
@@ -4851,7 +4841,9 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       this._suggestionAbort?.abort();
       this._stopSuggestionAutoUpdate?.();
       this._controller.abort();
+      this._contextController?.abort();
       this._sourceObserver?.disconnect();
+      this._fieldsetObserver?.disconnect();
       this.squire.destroy();
       this.suggestionPopup.remove();
       this.shell.remove();
@@ -4879,11 +4871,6 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       for (const type of ["input", "change", "invalid"]) {
         this.source.addEventListener(type, this, { signal });
       }
-      this._form = this.source.form;
-      this._form?.addEventListener("reset", this, { signal });
-      for (const label of this.source.labels ?? []) {
-        label.addEventListener("click", this, { signal });
-      }
       this.source.ownerDocument.addEventListener("pointerdown", this, { capture: true, signal });
       this._sourceObserver = new MutationObserver(() => {
         if (this._disposed)
@@ -4900,13 +4887,30 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           "aria-invalid",
           "aria-describedby",
           "aria-label",
+          "aria-labelledby",
           "placeholder",
           "spellcheck",
           "autocapitalize"
         ]
       });
+      this._bindContext();
+    }
+    _bindContext() {
+      this._contextController?.abort();
+      this._contextController = new AbortController;
+      const signal = this._contextController.signal;
+      this._form = this.source.form;
+      this._form?.addEventListener("reset", this, { signal });
+      for (const label of this.source.labels ?? []) {
+        label.addEventListener("click", this, { signal });
+      }
+      this._fieldsetObserver?.disconnect();
+      this._fieldsetObserver = new MutationObserver(() => {
+        if (!this._disposed)
+          this._syncEditableState();
+      });
       for (let fieldset = this.source.parentElement?.closest("fieldset");fieldset; ) {
-        this._sourceObserver.observe(fieldset, { attributes: true, attributeFilter: ["disabled"] });
+        this._fieldsetObserver.observe(fieldset, { attributes: true, attributeFilter: ["disabled"] });
         fieldset = fieldset.parentElement?.closest("fieldset");
       }
     }
@@ -5173,15 +5177,22 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }
     async _toggleLink() {
       const editor = this.squire;
-      const range = editor.getSelection();
-      const node = range.startContainer instanceof Element ? range.startContainer : range.startContainer.parentElement;
+      const range = editor.getSelection().cloneRange();
+      const { startContainer, endContainer } = range;
+      const node = startContainer instanceof Element ? startContainer : startContainer.parentElement;
       const link = node?.closest("a") ?? null;
       const href = link?.getAttribute("href") ?? "";
       const text = editor.getSelectedText();
+      const request = ++this._linkRequest;
       const next = await this.options.requestLink({ href, text, richText: this });
-      if (next == null || this._disposed)
+      if (next == null || this._disposed || request !== this._linkRequest || !this.editable)
+        return;
+      if (range.startContainer !== startContainer || range.endContainer !== endContainer)
+        return;
+      if (!this.surface.contains(startContainer) || !this.surface.contains(endContainer))
         return;
       editor.focus();
+      editor.setSelection(range);
       const value = next.trim();
       if (value && !isSafeHref(value)) {
         this.source.dispatchEvent(new CustomEvent("richtext:linkerror", {
@@ -5190,7 +5201,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         }));
         return;
       }
-      if (link?.isConnected && this.surface.contains(link) && editor.getSelection().collapsed) {
+      if (link?.isConnected && this.surface.contains(link) && range.collapsed) {
         const whole = this.source.ownerDocument.createRange();
         whole.selectNodeContents(link);
         editor.setSelection(whole);
@@ -5217,6 +5228,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       this._syncToolbarTabStops();
     }
     _setEditorHTML(html) {
+      this._linkRequest += 1;
       this._settingEditor = true;
       try {
         this.squire.setHTML(String(html ?? ""));
@@ -5255,14 +5267,16 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     }
     _copyAccessibility() {
       const source = this.source;
-      const labelledBy = [];
-      for (const label of source.labels ?? []) {
-        if (!label.id) {
-          const id = `rt-label-${++uid}`;
-          label.id = id;
-          this._generatedLabelIds.push({ label, id });
+      const labelledBy = source.getAttribute("aria-labelledby")?.split(/\s+/).filter(Boolean) ?? [];
+      if (!labelledBy.length) {
+        for (const label of source.labels ?? []) {
+          if (!label.id) {
+            const id = `rt-label-${++uid}`;
+            label.id = id;
+            this._generatedLabelIds.push({ label, id });
+          }
+          labelledBy.push(label.id);
         }
-        labelledBy.push(label.id);
       }
       this._setSurfaceAttributes({
         "aria-label": source.getAttribute("aria-label") || null,
@@ -5314,6 +5328,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           this.squire.setKeyHandler(`${modifier}${key}`, null);
       }
     }
+    _restrictLinkDetection() {
+      const pattern = this.squire.linkRegExp;
+      const source = pattern.source.replace("(?:ht|f)tps?", "https?");
+      this.squire.linkRegExp = source === pattern.source ? /(?!)/ : new RegExp(source, pattern.flags);
+    }
     _createSuggestionPopup() {
       const doc = this.source.ownerDocument;
       const popup = doc.createElement("div");
@@ -5323,7 +5342,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       popup.hidden = true;
       if ("showPopover" in popup)
         popup.setAttribute("popover", "manual");
-      doc.body.append(popup);
+      this.shell.append(popup);
       if (this.options.suggestions.length) {
         this._setSurfaceAttributes({
           "aria-autocomplete": "list",
@@ -5410,6 +5429,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         return reset();
       const range = this.squire.getSelection();
       if (!range.collapsed || !(range.startContainer instanceof Text))
+        return reset();
+      if (closestMention(range.startContainer, this.surface))
         return reset();
       const textBeforeCaret = range.startContainer.data.slice(0, range.startOffset);
       const match = matchSuggestionText(textBeforeCaret, providers.map((provider) => provider.trigger));
@@ -5569,7 +5590,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       span.setAttribute("contenteditable", "false");
       span.textContent = label;
       this.squire.setSelection(range);
-      this.squire.insertHTML(`${span.outerHTML} `);
+      this.squire.insertHTML(`${span.outerHTML} `);
     }
     _closeSuggestions() {
       this._suggestionAbort?.abort();
@@ -5730,7 +5751,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         return null;
       }
       if (this._richText && this._source === source)
-        return this._richText;
+        return this._richText.refresh();
       this._richText?.dispose();
       this._source = source;
       this._richText = new RichText(source, this.#resolvedOptions());

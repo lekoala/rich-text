@@ -71,6 +71,31 @@ test.describe("form contract", () => {
     await expect(editor).toHaveAttribute("contenteditable", "true");
   });
 
+  test("a <rich-text> moved to another form follows its reset and fieldset", async ({ page }) => {
+    await open(page);
+    await page.evaluate(async () => {
+      defineRichText();
+      document.querySelector("#root").innerHTML =
+        '<form id="old"><rich-text id="host"><textarea name="a"><p>Initial</p></textarea></rich-text></form>' +
+        '<form id="next"><fieldset disabled></fieldset></form>';
+      const richText = await document.querySelector("#host").whenReady();
+      richText.setHTML("<p>Changed</p>");
+      document.querySelector("#next fieldset").append(document.querySelector("#host"));
+    });
+    const editor = page.locator("#host .rt-editor");
+    await expect(editor).toHaveAttribute("contenteditable", "false");
+    await expect(editor).toHaveAttribute("aria-disabled", "true");
+
+    await page.evaluate(() => {
+      document.querySelector("#next fieldset").disabled = false;
+    });
+    await expect(editor).toHaveAttribute("contenteditable", "true");
+
+    await page.evaluate(() => document.querySelector("#next").reset());
+    await expect(editor).toHaveText("Initial");
+    await expect(page.locator("#host textarea")).toHaveValue("<p>Initial</p>");
+  });
+
   test("invalid focuses the editor only when it is the first invalid control", async ({ page }) => {
     await open(page);
     await page.evaluate(() => mount({ attrs: { required: true } }));
@@ -146,6 +171,35 @@ test.describe("sanitizer", () => {
     expect(await page.evaluate(() => window.XSS)).toBeUndefined();
   });
 
+  test("typed URLs are auto-linked only within the link policy", async ({ page }) => {
+    await open(page);
+    await page.evaluate(() => mount());
+    await page.locator(".rt-editor").click();
+    await page.keyboard.type("ftp://files.test and https://ok.test done");
+    await expect(page.locator(".rt-editor a")).toHaveCount(1);
+    await expect(page.locator(".rt-editor a")).toHaveAttribute("href", "https://ok.test");
+    expect(await page.locator("#note").inputValue()).not.toContain('href="ftp:');
+  });
+
+  test("the sanitizer cannot be replaced through options", async ({ page }) => {
+    await open(page);
+    await page.evaluate(() =>
+      mount({
+        html: '<p onclick="window.XSS=1">Hello</p>',
+        options: {
+          sanitizeToDOMFragment(html) {
+            const template = document.createElement("template");
+            template.innerHTML = html;
+            return template.content;
+          },
+        },
+      }),
+    );
+    await page.locator(".rt-editor p").click();
+    await expect(page.locator("#note")).toHaveValue("<p>Hello</p>");
+    expect(await page.evaluate(() => window.XSS)).toBeUndefined();
+  });
+
   test("Squire shortcuts outside the vocabulary are disabled", async ({ page }) => {
     await open(page);
     await page.evaluate(() => mount({ html: "<p>Hello</p>" }));
@@ -195,6 +249,71 @@ test.describe("links", () => {
     await page.locator('[data-command="link"]').click();
     await expect(page.locator(".rt-editor a")).toHaveCount(0);
     await expect(page.locator(".rt-editor")).toHaveText("Go here now");
+  });
+
+  test("an async answer applies to the selection it was asked for", async ({ page }) => {
+    await open(page);
+    await page.evaluate(() => {
+      mount({
+        html: "<p>Hello world</p>",
+        options: { requestLink: () => new Promise((resolve) => (window.resolveLink = resolve)) },
+      });
+      caretIn("Hello world", 0);
+      const range = rt.squire.getSelection();
+      range.setEnd(range.startContainer, 5);
+      rt.squire.setSelection(range);
+    });
+    await page.locator('[data-command="link"]').click();
+    await page.evaluate(() => {
+      caretIn("Hello world", 11);
+      window.resolveLink("https://a.test");
+    });
+    await expect(page.locator(".rt-editor a")).toHaveText("Hello");
+    await expect(page.locator("#note")).toHaveValue('<p><a href="https://a.test">Hello</a> world</p>');
+  });
+
+  test("an async answer is dropped after readonly, content replacement or a newer request", async ({
+    page,
+  }) => {
+    await open(page);
+    await page.evaluate(() => {
+      window.resolvers = [];
+      mount({
+        html: "<p>Hello</p>",
+        options: { requestLink: () => new Promise((resolve) => window.resolvers.push(resolve)) },
+      });
+      caretIn("Hello", 2);
+    });
+    const button = page.locator('[data-command="link"]');
+
+    await button.click();
+    await page.evaluate(() => {
+      rt.source.readOnly = true;
+      window.resolvers[0]("https://a.test");
+    });
+    await page.waitForTimeout(50);
+    await page.evaluate(() => {
+      rt.source.readOnly = false;
+      caretIn("Hello", 2);
+    });
+
+    await button.click();
+    await page.evaluate(() => {
+      rt.setHTML("<p>Hello</p>");
+      window.resolvers[1]("https://b.test");
+    });
+    await page.waitForTimeout(50);
+    await page.evaluate(() => caretIn("Hello", 2));
+
+    await button.click();
+    await button.click();
+    await page.evaluate(() => {
+      window.resolvers[2]("https://stale.test");
+      window.resolvers[3]("https://c.test");
+    });
+    // Only the newest answer lands (from a bare caret, Squire inserts the URL as the link text).
+    await expect(page.locator(".rt-editor a")).toHaveCount(1);
+    await expect(page.locator(".rt-editor a")).toHaveAttribute("href", "https://c.test");
   });
 
   test("refuses unsafe schemes with richtext:linkerror", async ({ page }) => {
@@ -263,6 +382,25 @@ test.describe("mentions", () => {
     await page.keyboard.press("Backspace");
     await expect(page.locator(".rt-editor [data-rt-mention]")).toHaveCount(1);
     await expect(page.locator(".rt-editor")).toContainText("x");
+  });
+
+  test("typing after a mention picked at the end of a block continues after it", async ({ page }) => {
+    await open(page);
+    await page.evaluate(() =>
+      mount({
+        options: {
+          suggestions: [{ trigger: "@", kind: "mention", search: () => [{ id: "a", name: "Alice" }] }],
+        },
+      }),
+    );
+    await page.locator(".rt-editor").click();
+    await page.keyboard.type("@");
+    await page.locator(".rt-suggestion").click();
+    await page.keyboard.type("hi");
+    await expect(page.locator("#note")).toHaveValue(
+      '<p><span data-rt-mention="mention" data-id="a" contenteditable="false">@Alice</span>&nbsp;hi</p>',
+    );
+    await expect(page.locator(".rt-suggestion")).toHaveCount(0);
   });
 
   test("removal is undoable", async ({ page }) => {
@@ -404,6 +542,26 @@ test.describe("suggestions", () => {
     await expect(page.locator(".rt-suggestion")).toHaveText(["hit k"]);
   });
 
+  test("rows are clickable inside a modal dialog", async ({ page }) => {
+    await open(page);
+    await page.evaluate(() => {
+      mount({
+        options: {
+          suggestions: [{ trigger: "@", kind: "mention", search: () => [{ id: "a", name: "Alice" }] }],
+        },
+      });
+      const dialog = document.createElement("dialog");
+      document.body.append(dialog);
+      dialog.append(document.querySelector("#root"));
+      dialog.showModal();
+    });
+    await page.locator(".rt-editor").click();
+    await page.keyboard.type("@");
+    await page.locator(".rt-suggestion").click();
+    await expect(page.locator(".rt-editor [data-rt-mention]")).toHaveText("@Alice");
+    await expect(page.locator(".rt-suggestion")).toHaveCount(0);
+  });
+
   test("search errors close the popup and emit richtext:suggestionerror", async ({ page }) => {
     await open(page);
     await page.evaluate(() =>
@@ -501,6 +659,19 @@ test.describe("lifecycle", () => {
     await expect(page.locator(".rt-shell, .rt-suggestions")).toHaveCount(0);
     await expect(page.locator("#note")).toBeVisible();
     await expect(page.locator('label[for="note"]')).not.toHaveAttribute("id", /./);
+  });
+
+  test("an authored aria-labelledby wins over labels and is mirrored live", async ({ page }) => {
+    await open(page);
+    await page.evaluate(() => {
+      mount({ attrs: { "aria-labelledby": "title hint" } });
+    });
+    const editor = page.locator(".rt-editor");
+    await expect(editor).toHaveAttribute("aria-labelledby", "title hint");
+    await expect(page.locator('label[for="note"]')).not.toHaveAttribute("id", /./);
+
+    await page.evaluate(() => rt.source.removeAttribute("aria-labelledby"));
+    await expect(editor).toHaveAttribute("aria-labelledby", /^rt-label-\d+$/);
   });
 
   test("<rich-text> rebinds when its textarea is replaced", async ({ page }) => {

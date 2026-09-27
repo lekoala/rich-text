@@ -1,6 +1,6 @@
 {
   "name": "@lekoala/rich-text",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Opinionated, progressive rich-text editor built on Squire",
   "type": "module",
   "sideEffects": [
@@ -31,6 +31,7 @@
   "files": [
     "dist",
     "src",
+    "CHANGELOG.md",
     "LICENSE",
     "README.md"
   ],
