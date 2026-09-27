@@ -33,7 +33,7 @@ defineRichText();
 ```
 
 ```html
-<label for="note">Consultation note</label>
+<label for="note">Project note</label>
 <rich-text>
   <textarea id="note" name="note" required></textarea>
 </rich-text>
@@ -41,6 +41,9 @@ defineRichText();
 
 Without JavaScript the textarea remains a normal textarea. With JavaScript it is hidden and stays the native
 form-value owner; the component never invents a second serialized form state.
+
+`<rich-text>` binds to its direct child textarea. If that textarea is replaced or removed (for example by a
+framework re-render), the previous editor is disposed and a new one is bound to the new textarea.
 
 Importing `@lekoala/rich-text` has no registration side effect. Consumers can either call `defineRichText()` or
 import `@lekoala/rich-text/define` explicitly.
@@ -50,7 +53,7 @@ import `@lekoala/rich-text/define` explicitly.
 The default toolbar is intentionally small:
 
 ```text
-bold italic bullet-list ordered-list link blockquote undo redo
+bold italic | bullet-list ordered-list | link blockquote | undo redo
 ```
 
 Use `toolbar="none"` or provide a list:
@@ -75,9 +78,9 @@ box.options = {
     {
       trigger: "@",
       kind: "mention",
-      mentionType: "practitioner",
+      mentionType: "user",
       async search(query, { signal }) {
-        const response = await fetch(`/api/practitioners?q=${encodeURIComponent(query)}`, { signal });
+        const response = await fetch(`/api/users?q=${encodeURIComponent(query)}`, { signal });
         return response.json();
       },
       getId: (item) => item.id,
@@ -90,14 +93,17 @@ box.options = {
 A selection is stored as ordinary sanitized HTML:
 
 ```html
-<span data-rt-mention="practitioner" data-id="abc123" contenteditable="false">@Dr Martin</span>
+<span data-rt-mention="user" data-id="abc123" contenteditable="false">@Alice Martin</span>
 ```
 
-The component treats the mention atomically for adjacent Backspace/Delete and exposes structured data:
+The component treats the mention atomically: Backspace/Delete next to it (including across inline wrappers such
+as `<b>` and Squire's zero-width caret placeholders) removes it whole and emits `richtext:mentionremove`, and a
+selection that starts or ends inside a mention is widened to the whole mention before it is replaced, cut or
+dropped. Structured data stays available:
 
 ```js
 box.richText.getMentions();
-// [{ type: "practitioner", id: "abc123", label: "@Dr Martin" }]
+// [{ type: "user", id: "abc123", label: "@Alice Martin" }]
 ```
 
 This is enough for notification/backlink extraction without turning the whole document into a proprietary JSON
@@ -129,37 +135,117 @@ p br b strong i em ul ol li blockquote a
 span[data-rt-mention][data-id][contenteditable]
 ```
 
-Non-mention spans are unwrapped. `javascript:`/`data:` links are removed. The client-side sanitizer is a UI
-boundary, **not** the persistence security boundary: sanitize/validate HTML again on the server before storing or
+Non-mention spans are unwrapped and a mention label is flattened to plain text. `data-rt-mention`, `data-id`
+and `contenteditable` are stripped from every other element (a stray `contenteditable="true"` would otherwise
+re-enable editing inside a readonly editor).
+
+Links follow one policy everywhere (initial value, paste, drop, suggestion HTML and the toolbar): relative/hash
+URLs and `http:`, `https:`, `mailto:`, `tel:` only. A link with a missing or refused `href` is unwrapped to its
+text. The toolbar reports a refused URL with `richtext:linkerror`.
+
+Squire's built-in shortcuts for tags outside the vocabulary (underline, strikethrough, sub/superscript, code)
+are disabled so keyboard input cannot produce HTML that the sanitizer would drop on the next load.
+
+The client-side sanitizer is a UI boundary, **not** the persistence security boundary: sanitize/validate HTML again on the server before storing or
 rendering untrusted content.
 
 ## Form contract
 
-- the authored `<textarea>` owns `name`, `required`, `disabled`, `readonly` and submission;
+- the authored `<textarea>` owns `name`, `required`, `disabled`, `readonly` and submission; a disabled ancestor
+  `<fieldset>` disables the editor too;
 - user edits dispatch native `input` on the textarea and `change` when the editor loses focus after a change;
 - `form.reset()` restores the authored textarea value and rehydrates Squire;
 - an editor containing only Squire's empty block serializes to `""`, so native `required` keeps working;
-- native `invalid` is redirected to the visible editor and emits `richtext:invalid`;
+- native `invalid` emits `richtext:invalid`; the editor takes focus when it is the form's first invalid control
+  (the hidden textarea cannot show the native validation bubble, so render your own message on that event);
 - external code that changes `textarea.value` can call `richText.sync()` (or dispatch `input`/`change`).
 
-## Actual CSS bridge
+## Toolbar
 
-The component is UI-framework agnostic. Actual can skin it through a small token bridge rather than an adapter:
+`toolbar` lists commands in order; `|` starts a group (`role="group"`, rendered as `.rt-group`):
+
+```html
+<rich-text toolbar="bold italic | bullet-list ordered-list | link">…</rich-text>
+```
+
+Labels and visible content are per-command overrides. A string `content` is rendered as text; a function returns
+a Node (an icon), never an HTML string:
+
+```js
+box.options = {
+  toolbarLabel: "Mise en forme",
+  buttons: {
+    bold: { label: "Gras", content: "G" },
+    link: { label: "Lien", content: () => Object.assign(document.createElement("i"), { className: "ti ti-link" }) },
+  },
+  // Any async UI (e.g. a <dialog>) can replace window.prompt(); the answer still goes through isSafeHref.
+  requestLink: ({ href }) => openLinkDialog(href),
+};
+```
+
+The toolbar is one tab stop (arrow keys, Home/End move between buttons). Pointer clicks do not move focus out of
+the editor, so the selection survives.
+
+## Theming
+
+`rich-text.css` is driven by `--rt-*` custom properties (colours, `--rt-focus-width`, `--rt-min-height`,
+`--rt-max-height`, `--rt-font-size`, button pressed/hover, disabled, link, quote, mention and suggestion tokens).
+The suggestion popover is appended to `<body>`, outside the editor, so the tokens are declared on both
+`.rt-shell` and `.rt-suggestions`: a theme must override them on both.
+
+State hooks: `.rt-shell[data-disabled]`, `.rt-shell[data-readonly]`, `.rt-editor[aria-invalid]` (mirrored from the
+textarea), `.rt-editor[data-empty="true"]`, `.rt-button[aria-pressed="true"]`,
+`.rt-suggestion[aria-selected="true"]`.
+
+### Actual CSS
+
+The component stays UI-framework agnostic; Actual skins it through a token bridge rather than an adapter.
+`demo/actual.html` is the complete, runnable recipe (tokens, invalid hook, composer layout, Tabler icons, `<dialog>`
+link editor). The core of it:
 
 ```css
-.actual-rich-text .rt-shell {
+.actual-rich-text .rt-shell,
+.rt-suggestions {
   --rt-bg: var(--surface);
   --rt-fg: var(--text);
-  --rt-border: var(--form-invalid-border, var(--border));
-  --rt-focus: var(--focus);
+  --rt-border: var(--form-invalid-border, var(--control-border, var(--border)));
+  --rt-muted: var(--text-muted);
+  --rt-focus: var(--form-invalid-border, var(--focus));
+  --rt-focus-width: var(--focus-ring-width);
   --rt-radius: var(--radius);
+  --rt-font-size: var(--control-font-size);
   --rt-toolbar-bg: var(--surface-subtle);
+  --rt-button-hover: var(--hover-overlay);
+  --rt-button-pressed-bg: var(--state-selected);
+  --rt-button-pressed-fg: var(--state-selected-fg);
+  --rt-disabled-bg: var(--surface-subtle);
+  --rt-disabled-fg: var(--state-disabled);
+  --rt-link: var(--primary);
   --rt-mention-bg: color-mix(in oklab, var(--surface) var(--soft-bg-mix), var(--primary));
+  --rt-mention-fg: color-mix(in oklab, var(--primary) var(--soft-fg-mix), var(--text));
   --rt-suggestion-bg: var(--surface-raised);
+  --rt-suggestion-active: var(--hover-overlay);
+  --rt-suggestion-shadow: var(--shadow-popout);
+}
+
+/* The hidden textarea owns validity: the wrapper re-owns Actual's invalid hook. */
+.actual-rich-text:has(textarea[aria-invalid="true"]),
+.needs-validation.was-validated .actual-rich-text:has(textarea:invalid) {
+  --form-invalid-border: var(--danger);
 }
 ```
 
-Actual still owns presentation; this package owns rich-text behaviour.
+Actual still owns presentation and composer chrome (attachments, send, Ctrl/Cmd+Enter); this package owns
+rich-text behaviour. Note that Actual's own design notes treat `@`/`/` suggestions as a plain-textarea
+improvement; here they are part of the rich editor because mentions are structured, atomic entities.
+
+## Demos
+
+`bun run dev`, then open `http://127.0.0.1:4174/`:
+
+- `demo/index.html` — generic: no CSS framework, async mentions, slash snippets, value/mentions/events inspector,
+  toolbar configuration, localisation, native states;
+- `demo/actual.html` — the same component inside Actual CSS: theme picker, bridge, composer, states.
 
 ## Development
 
@@ -177,4 +263,4 @@ bun run check:all      # full Chromium/Firefox/WebKit matrix
 Real-browser tests are required for changes involving selection, keyboard behaviour, focus, paste, IME, mentions,
 ARIA or form integration.
 
-> Prototype note: this archive intentionally does not include `bun.lock` or generated `dist/`. Run `bun install` once, commit the lockfile, then `bun run sync` to generate release artifacts.
+`bun run sync` regenerates `dist/` (bundles and `dist/types` declarations); never edit it by hand.

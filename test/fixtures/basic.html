@@ -6,9 +6,9 @@
 </head>
 <body>
   <form id="form">
-    <label for="note">Consultation note</label>
+    <label for="note">Project note</label>
     <rich-text id="basic">
-      <textarea id="note" name="note" required placeholder="Write a note…"><p>Hello patient</p></textarea>
+      <textarea id="note" name="note" required placeholder="Write a note…"><p>Hello team</p></textarea>
     </rich-text>
     <button id="reset" type="reset">Reset</button>
   </form>
@@ -27,11 +27,11 @@
     import { defineRichText } from "/src/index.js";
 
     const people = [
-      { id: "p1", name: "Dr Martin" },
-      { id: "p2", name: "Dr Martens" },
+      { id: "u1", name: "Alice Martin" },
+      { id: "u2", name: "Alex Marsh" },
     ];
     const templates = [
-      { id: "followup", label: "Follow-up", html: "<p><b>Follow-up:</b> return in 3 months.</p>" },
+      { id: "followup", label: "Follow-up", html: "<p><b>Follow-up:</b> check back next week.</p>" },
     ];
 
     document.querySelector("#mentions").options = {
@@ -39,7 +39,7 @@
         {
           trigger: "@",
           kind: "mention",
-          mentionType: "practitioner",
+          mentionType: "user",
           search(query) {
             return people.filter((item) => item.name.toLowerCase().includes(query.toLowerCase()));
           },

@@ -1,8 +1,8 @@
 import {
-  RichText,
-  RichTextElement,
   defineRichText,
   matchSuggestionText,
+  RichText,
+  type RichTextElement,
   type RichTextOptions,
 } from "@lekoala/rich-text";
 

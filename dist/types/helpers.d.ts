@@ -1,3 +1,5 @@
+/** `|` separates toolbar groups. */
+export declare const TOOLBAR_SEPARATOR = "|";
 export declare const DEFAULT_TOOLBAR: string[];
 export type SuggestionMatch = {
     trigger: string;
@@ -13,11 +15,18 @@ export type SuggestionMatch = {
  * @property {number} end
  */
 /**
- * Normalize a toolbar declaration while rejecting unknown commands.
+ * Normalize a toolbar declaration while rejecting unknown commands. `|` starts a new group; empty groups
+ * and leading/trailing separators are dropped.
  * @param {string[] | string | null | undefined} value
  * @returns {string[]}
  */
 export declare function normalizeToolbar(value: string[] | string | null | undefined): string[];
+/**
+ * Split a normalized toolbar into its groups.
+ * @param {string[]} toolbar
+ * @returns {string[][]}
+ */
+export declare function toolbarGroups(toolbar: string[]): string[][];
 /**
  * Find the active trigger/query in one text node before the caret.
  * Triggers only start at a text boundary; the query itself cannot contain whitespace.

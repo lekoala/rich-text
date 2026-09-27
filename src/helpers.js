@@ -1,15 +1,21 @@
+/** `|` separates toolbar groups. */
+export const TOOLBAR_SEPARATOR = "|";
+
 export const DEFAULT_TOOLBAR = [
   "bold",
   "italic",
+  TOOLBAR_SEPARATOR,
   "bullet-list",
   "ordered-list",
+  TOOLBAR_SEPARATOR,
   "link",
   "blockquote",
+  TOOLBAR_SEPARATOR,
   "undo",
   "redo",
 ];
 
-const TOOLBAR_COMMANDS = new Set(DEFAULT_TOOLBAR);
+const TOOLBAR_COMMANDS = new Set(DEFAULT_TOOLBAR.filter((entry) => entry !== TOOLBAR_SEPARATOR));
 
 /**
  * @typedef {Object} SuggestionMatch
@@ -20,22 +26,47 @@ const TOOLBAR_COMMANDS = new Set(DEFAULT_TOOLBAR);
  */
 
 /**
- * Normalize a toolbar declaration while rejecting unknown commands.
+ * Normalize a toolbar declaration while rejecting unknown commands. `|` starts a new group; empty groups
+ * and leading/trailing separators are dropped.
  * @param {string[] | string | null | undefined} value
  * @returns {string[]}
  */
 export function normalizeToolbar(value) {
   if (value == null) return [...DEFAULT_TOOLBAR];
-  const entries = Array.isArray(value) ? value : String(value).split(/[\s,]+/);
+  const entries = Array.isArray(value)
+    ? value
+    : String(value)
+        .replaceAll("|", " | ")
+        .split(/[\s,]+/);
   if (entries.length === 1 && entries[0] === "none") return [];
 
   /** @type {string[]} */
   const result = [];
   for (const entry of entries) {
+    if (entry === TOOLBAR_SEPARATOR) {
+      if (result.length && result.at(-1) !== TOOLBAR_SEPARATOR) result.push(entry);
+      continue;
+    }
     if (!entry || !TOOLBAR_COMMANDS.has(entry) || result.includes(entry)) continue;
     result.push(entry);
   }
+  if (result.at(-1) === TOOLBAR_SEPARATOR) result.pop();
   return result;
+}
+
+/**
+ * Split a normalized toolbar into its groups.
+ * @param {string[]} toolbar
+ * @returns {string[][]}
+ */
+export function toolbarGroups(toolbar) {
+  /** @type {string[][]} */
+  const groups = [[]];
+  for (const entry of toolbar) {
+    if (entry === TOOLBAR_SEPARATOR) groups.push([]);
+    else groups.at(-1)?.push(entry);
+  }
+  return groups.filter((group) => group.length);
 }
 
 /**

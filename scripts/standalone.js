@@ -1,5 +1,5 @@
-import styles from "../src/rich-text.css";
 import { defineRichText } from "../src/index.js";
+import styles from "../src/rich-text.css";
 
 const STYLE_ID = "lekoala-rich-text-style";
 

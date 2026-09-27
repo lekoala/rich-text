@@ -1,5 +1,5 @@
-import { RichText } from "./rich-text.js";
 import { normalizeToolbar } from "./helpers.js";
+import { RichText } from "./rich-text.js";
 
 /** @typedef {import("./rich-text.js").RichTextOptions} RichTextOptions */
 
@@ -86,14 +86,15 @@ export class RichTextElement extends HTMLElement {
 
   /** @returns {RichText | null} */
   upgrade() {
+    this.#watchSource();
     const source = this.#findSource();
     if (!source) {
-      this.#watchForSource();
+      // The textarea was removed (e.g. a framework re-render): drop the editor until a new one appears.
+      this._richText?.dispose();
+      this._richText = null;
+      this._source = null;
       return null;
     }
-
-    this._sourceObserver?.disconnect();
-    this._sourceObserver = null;
 
     if (this._richText && this._source === source) return this._richText;
     this._richText?.dispose();
@@ -134,10 +135,11 @@ export class RichTextElement extends HTMLElement {
     return null;
   }
 
-  #watchForSource() {
+  /** Rebind whenever the child textarea appears, disappears or is replaced. */
+  #watchSource() {
     if (this._sourceObserver) return;
     this._sourceObserver = new MutationObserver(() => {
-      if (this.#findSource()) this.upgrade();
+      if (this.isConnected && this.#findSource() !== this._source) this.upgrade();
     });
     this._sourceObserver.observe(this, { childList: true });
   }

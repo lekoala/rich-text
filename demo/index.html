@@ -3,69 +3,237 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>@lekoala/rich-text prototype</title>
+  <title>Rich text demo</title>
+  <meta name="color-scheme" content="light dark">
   <link rel="stylesheet" href="../src/rich-text.css">
   <style>
-    body { max-width: 52rem; margin: 3rem auto; padding: 0 1rem; font: 16px/1.5 system-ui, sans-serif; }
-    label { display: block; margin-block-end: .5rem; font-weight: 650; }
-    .hint { color: #666; }
+    :root {
+      --page-bg: #f6f7f9;
+      --card-bg: #fff;
+      --line: #dde1e6;
+      --muted: #5c6470;
+      --accent: #2f5bd3;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --page-bg: #15171a;
+        --card-bg: #1d2024;
+        --line: #33383f;
+        --muted: #a2a9b3;
+        --accent: #8fb0ff;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--page-bg); color: CanvasText; font: 16px/1.5 system-ui, sans-serif; }
+    main { max-inline-size: 60rem; margin-inline: auto; padding: 2.5rem 1rem 4rem; display: grid; gap: 1.5rem; }
+    header { display: flex; flex-wrap: wrap; gap: 1rem; justify-content: space-between; align-items: flex-start; }
+    h1 { margin: 0; font-size: 1.75rem; }
+    h2 { margin: 0 0 .25rem; font-size: 1.125rem; }
+    p { margin: 0; }
+    a { color: var(--accent); }
+    code { font-size: .9em; }
+    .muted { color: var(--muted); }
+    .card { display: grid; gap: .75rem; padding: 1.25rem; border: 1px solid var(--line); border-radius: .75rem; background: var(--card-bg); }
+    .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); }
+    .field { display: grid; gap: .375rem; }
+    .field > label, .field-label { font-weight: 650; }
+    .field-help { color: var(--muted); font-size: .875rem; }
+    .field-error { color: #c62828; font-size: .875rem; }
+    .actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+    button.demo { padding: .4rem .8rem; border: 1px solid var(--line); border-radius: .5rem; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+    button.demo.primary { border-color: var(--accent); background: var(--accent); color: var(--card-bg); }
+    pre { margin: 0; max-block-size: 14rem; overflow: auto; padding: .75rem; border-radius: .5rem; background: var(--page-bg); font-size: .8125rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .log { display: grid; gap: .125rem; max-block-size: 10rem; overflow: auto; margin: 0; padding: .75rem; border-radius: .5rem; background: var(--page-bg); font: .8125rem/1.4 ui-monospace, monospace; list-style: none; }
+    .log:empty::before { content: "Events appear here."; color: var(--muted); }
+    .row { display: grid; line-height: 1.3; }
+    .row small { color: var(--muted); }
+    /* Invalid state: the hidden textarea carries aria-invalid; the shell follows it. */
+    rich-text:has(textarea[aria-invalid="true"]) .rt-shell { --rt-border: #c62828; --rt-focus: #c62828; }
   </style>
 </head>
 <body>
-  <h1>@lekoala/rich-text</h1>
-  <p class="hint">Opinionated Squire wrapper. Try <code>@mar</code> or <code>/fol</code>.</p>
+  <main>
+    <header>
+      <div>
+        <p class="muted">@lekoala/rich-text</p>
+        <h1>Generic demo</h1>
+        <p class="muted">No CSS framework: only <code>rich-text.css</code> and its <code>--rt-*</code> tokens.</p>
+      </div>
+      <a href="actual.html">Actual CSS integration →</a>
+    </header>
 
-  <label for="note">Consultation note</label>
-  <rich-text id="editor">
-    <textarea id="note" name="note" rows="8" placeholder="Write a note…"><p>Patient reports improvement.</p></textarea>
-  </rich-text>
+    <section class="card">
+      <div>
+        <h2>Project note</h2>
+        <p class="muted">
+          Type <code>@al</code> for an async mention (random latency, stale searches aborted) or <code>/</code> for
+          templates. Backspace/Delete remove a mention whole. Pasted content is sanitized.
+        </p>
+      </div>
+      <form id="note-form" class="field" novalidate>
+        <label for="note">Note</label>
+        <rich-text id="note-editor">
+          <textarea id="note" name="note" rows="8" required placeholder="Write a note…" aria-describedby="note-help note-error"><p>Kick-off went well. Next review with <span data-rt-mention="user" data-id="u1" contenteditable="false">@Alice Martin</span>.</p></textarea>
+        </rich-text>
+        <p class="field-help" id="note-help">Required. Bold, italic, lists, links and quotes only.</p>
+        <p class="field-error" id="note-error" hidden>Write something before submitting.</p>
+        <div class="actions">
+          <button class="demo primary" type="submit">Submit</button>
+          <button class="demo" type="reset">Reset</button>
+          <button class="demo" type="button" id="toggle-readonly">Toggle readonly</button>
+          <button class="demo" type="button" id="toggle-disabled">Toggle disabled</button>
+        </div>
+      </form>
+      <div class="grid">
+        <div class="field">
+          <span class="field-label">Textarea value (what the form submits)</span>
+          <pre id="note-value"></pre>
+        </div>
+        <div class="field">
+          <span class="field-label">Structured mentions — <code>getMentions()</code></span>
+          <pre id="note-mentions"></pre>
+        </div>
+      </div>
+      <div class="field">
+        <span class="field-label">Events</span>
+        <ol class="log" id="note-log" aria-live="off"></ol>
+      </div>
+    </section>
 
-  <p><button id="mentions" type="button">Log mentions</button></p>
+    <section class="card">
+      <div>
+        <h2>Toolbar configuration</h2>
+        <p class="muted">
+          <code>toolbar</code> takes commands in order; <code>|</code> starts a group. The <code>buttons</code> and
+          <code>toolbarLabel</code> options localise labels or swap the glyphs for icons (Nodes, never HTML strings).
+        </p>
+      </div>
+      <div class="grid">
+        <div class="field">
+          <label for="short">Short toolbar</label>
+          <rich-text toolbar="bold italic | undo redo">
+            <textarea id="short" name="short" rows="3"><p>Only <b>bold</b> and <i>italic</i>.</p></textarea>
+          </rich-text>
+        </div>
+        <div class="field">
+          <label for="bare">No toolbar</label>
+          <rich-text toolbar="none">
+            <textarea id="bare" name="bare" rows="3"><p>Keyboard shortcuts still work (Ctrl+B, Ctrl+I).</p></textarea>
+          </rich-text>
+        </div>
+        <div class="field">
+          <label for="localised">Localised (French)</label>
+          <rich-text id="localised-editor">
+            <textarea id="localised" name="localised" rows="3" placeholder="Écrire une note…"></textarea>
+          </rich-text>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div>
+        <h2>Native states</h2>
+        <p class="muted">Authored on the textarea and mirrored to the editor. A disabled <code>&lt;fieldset&gt;</code> counts too.</p>
+      </div>
+      <div class="grid">
+        <div class="field">
+          <label for="ro">Readonly</label>
+          <rich-text><textarea id="ro" name="ro" readonly><p>Readonly with a <span data-rt-mention="user" data-id="u3" contenteditable="false">@Maria Lopez</span> mention.</p></textarea></rich-text>
+        </div>
+        <fieldset class="field" disabled style="margin: 0; padding: 0; border: 0;">
+          <label for="dis">Disabled (via fieldset)</label>
+          <rich-text><textarea id="dis" name="dis"><p>Not editable, not submitted.</p></textarea></rich-text>
+        </fieldset>
+        <div class="field">
+          <label for="inv">Invalid</label>
+          <rich-text><textarea id="inv" name="inv" aria-invalid="true"><p>Needs review.</p></textarea></rich-text>
+        </div>
+      </div>
+    </section>
+  </main>
 
   <script type="module">
     import { defineRichText } from "../src/index.js";
+    import { createProviders } from "./demo-data.js";
 
-    const people = [
-      { id: "p1", name: "Dr Martin", specialty: "Cardiology" },
-      { id: "p2", name: "Dr Martens", specialty: "General practice" },
-      { id: "p3", name: "Dr Moreau", specialty: "Dermatology" },
-    ];
-    const templates = [
-      { label: "Follow-up", html: "<p><b>Follow-up:</b> return in 3 months.</p>" },
-      { label: "Normal exam", html: "<p>Clinical examination is within normal limits.</p>" },
-    ];
+    const log = document.querySelector("#note-log");
+    /** @param {string} line */
+    const addLog = (line) => {
+      const item = document.createElement("li");
+      item.textContent = `${new Date().toLocaleTimeString()}  ${line}`;
+      log.prepend(item);
+      while (log.children.length > 40) log.lastElementChild.remove();
+    };
 
-    const box = document.querySelector("#editor");
-    box.options = {
-      suggestions: [
-        {
-          trigger: "@",
-          kind: "mention",
-          mentionType: "practitioner",
-          search: (query) => people.filter((item) => item.name.toLowerCase().includes(query.toLowerCase())),
-          getId: (item) => item.id,
-          getLabel: (item) => item.name,
-          renderItem(item) {
-            const node = document.createElement("div");
-            node.innerHTML = `<strong></strong><br><small></small>`;
-            node.querySelector("strong").textContent = item.name;
-            node.querySelector("small").textContent = item.specialty;
-            return node;
-          },
-        },
-        {
-          trigger: "/",
-          search: (query) => templates.filter((item) => item.label.toLowerCase().includes(query.toLowerCase())),
-          getLabel: (item) => item.label,
-          insert: (item) => ({ type: "html", html: item.html }),
-        },
-      ],
+    /** Rich rows are DOM Nodes; strings would be rendered as text. */
+    const renderRow = (title, detail) => {
+      const row = document.createElement("span");
+      row.className = "row";
+      row.append(Object.assign(document.createElement("strong"), { textContent: title }));
+      row.append(Object.assign(document.createElement("small"), { textContent: detail }));
+      return row;
+    };
+
+    const box = document.querySelector("#note-editor");
+    box.options = { suggestions: createProviders({ renderRow, onSearch: (query) => addLog(`search ${query}`) }) };
+
+    document.querySelector("#localised-editor").options = {
+      toolbarLabel: "Mise en forme",
+      buttons: {
+        bold: { label: "Gras", content: "G" },
+        italic: { label: "Italique" },
+        "bullet-list": { label: "Liste à puces" },
+        "ordered-list": { label: "Liste numérotée" },
+        link: { label: "Lien" },
+        blockquote: { label: "Citation" },
+        undo: { label: "Annuler" },
+        redo: { label: "Rétablir" },
+      },
+      requestLink: ({ href }) => window.prompt("Adresse du lien", href || "https://"),
     };
 
     defineRichText();
-    document.querySelector("#mentions").addEventListener("click", () => {
-      console.log(box.richText.getMentions());
+
+    const form = document.querySelector("#note-form");
+    const note = document.querySelector("#note");
+    const error = document.querySelector("#note-error");
+    const render = () => {
+      document.querySelector("#note-value").textContent = note.value || '""';
+      document.querySelector("#note-mentions").textContent = JSON.stringify(box.richText?.getMentions() ?? [], null, 2);
+    };
+
+    box.addEventListener("richtext:ready", render);
+    for (const type of ["input", "change", "richtext:mentionselect", "richtext:mentionremove", "richtext:linkerror", "richtext:invalid", "richtext:suggestionerror"]) {
+      note.addEventListener(type, (event) => {
+        if (type !== "input") addLog(type + (event.detail?.id ? ` ${event.detail.id}` : ""));
+        render();
+      });
+    }
+
+    // The hidden textarea cannot show the native bubble: mirror validity with aria-invalid and a message.
+    const setInvalid = (invalid) => {
+      note.toggleAttribute("aria-invalid", invalid);
+      if (invalid) note.setAttribute("aria-invalid", "true");
+      error.hidden = !invalid;
+    };
+    note.addEventListener("richtext:invalid", () => setInvalid(true));
+    note.addEventListener("input", () => {
+      if (note.hasAttribute("aria-invalid")) setInvalid(!note.checkValidity());
     });
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (!form.reportValidity()) return;
+      addLog(`submit (${note.value.length} chars)`);
+    });
+    form.addEventListener("reset", () => {
+      setInvalid(false);
+      queueMicrotask(render);
+    });
+
+    document.querySelector("#toggle-readonly").addEventListener("click", () => note.toggleAttribute("readonly"));
+    document.querySelector("#toggle-disabled").addEventListener("click", () => note.toggleAttribute("disabled"));
   </script>
 </body>
 </html>

@@ -1,11 +1,13 @@
+export { DEFAULT_TOOLBAR, isEditorEmpty, isSafeHref, matchSuggestionText, mentionFromElement, normalizeToolbar, TOOLBAR_SEPARATOR, toolbarGroups, } from "./helpers.js";
 export { RichText } from "./rich-text.js";
-export { RichTextElement, defineRichText } from "./rich-text-element.js";
-export { DEFAULT_TOOLBAR, isEditorEmpty, isSafeHref, matchSuggestionText, mentionFromElement, normalizeToolbar, } from "./helpers.js";
-export { DEFAULT_ALLOWED_ATTRIBUTES, DEFAULT_ALLOWED_TAGS, createSanitizeToDOMFragment, } from "./sanitize.js";
+export { defineRichText, RichTextElement } from "./rich-text-element.js";
+export { createSanitizeToDOMFragment, DEFAULT_ALLOWED_ATTRIBUTES, DEFAULT_ALLOWED_TAGS, } from "./sanitize.js";
 export type RichTextOptions = import("./rich-text.js").RichTextOptions;
 export type SuggestionProvider = import("./rich-text.js").SuggestionProvider;
 export type SuggestionInsert = import("./rich-text.js").SuggestionInsert;
+export type ToolbarButtonOverride = import("./rich-text.js").ToolbarButtonOverride;
 /** @typedef {import("./rich-text.js").RichTextOptions} RichTextOptions */
 /** @typedef {import("./rich-text.js").SuggestionProvider} SuggestionProvider */
 /** @typedef {import("./rich-text.js").SuggestionInsert} SuggestionInsert */
+/** @typedef {import("./rich-text.js").ToolbarButtonOverride} ToolbarButtonOverride */
 //# sourceMappingURL=index.d.ts.map

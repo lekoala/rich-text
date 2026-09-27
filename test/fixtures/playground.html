@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="/src/rich-text.css">
+</head>
+<body>
+  <div id="root"></div>
+  <button id="outside" type="button">Outside</button>
+
+  <script type="module">
+    import { defineRichText, RichText } from "/src/index.js";
+
+    window.RichText = RichText;
+    window.MENTION = '<span data-rt-mention="person" data-id="p1" contenteditable="false">@Ann</span>';
+    window.pageErrors = [];
+    window.addEventListener("error", (event) => {
+      // Benign per spec: the popover's size follows the available height set while repositioning it.
+      if (String(event.message).startsWith("ResizeObserver loop")) return;
+      window.pageErrors.push(String(event.message));
+    });
+    window.addEventListener("unhandledrejection", (event) => window.pageErrors.push(String(event.reason)));
+
+    const TRACKED = [
+      "input",
+      "change",
+      "richtext:invalid",
+      "richtext:linkerror",
+      "richtext:mentionremove",
+      "richtext:suggestionerror",
+    ];
+
+    /**
+     * Mount a RichText on a fresh form. Options containing functions must be built in the page,
+     * so tests call this from page.evaluate().
+     */
+    window.mount = ({ html = "", options = {}, attrs = {}, before = "", fieldset = false } = {}) => {
+      window.rt?.dispose();
+      const field = '<label for="note">Note</label><textarea id="note" name="note"></textarea>';
+      document.querySelector("#root").innerHTML =
+        `<form id="form">${before}${fieldset ? `<fieldset>${field}</fieldset>` : field}` +
+        '<button id="submit" type="submit">Send</button></form>';
+      const textarea = document.querySelector("#note");
+      textarea.defaultValue = html;
+      for (const [name, value] of Object.entries(attrs)) textarea.setAttribute(name, value === true ? "" : value);
+      window.events = [];
+      for (const type of TRACKED) textarea.addEventListener(type, () => window.events.push(type));
+      document.querySelector("#form").addEventListener("submit", (event) => event.preventDefault());
+      window.rt = new RichText(textarea, options);
+      return true;
+    };
+
+    /** Focus the editor and put a collapsed caret at `offset` in the `nth` text node matching `text`. */
+    window.caretIn = (text, offset, nth = 0) => {
+      const walker = document.createTreeWalker(window.rt.surface, NodeFilter.SHOW_TEXT);
+      let count = 0;
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if (node.data === text && count++ === nth) {
+          const range = document.createRange();
+          range.setStart(node, offset);
+          window.rt.squire.focus();
+          window.rt.squire.setSelection(range);
+          return true;
+        }
+      }
+      throw new Error(`No text node ${JSON.stringify(text)}`);
+    };
+
+    window.defineRichText = defineRichText;
+    window.fixtureReady = true;
+  </script>
+</body>
+</html>

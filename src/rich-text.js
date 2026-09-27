@@ -1,12 +1,12 @@
-import Squire from "squire-rte";
 import { autoUpdate, repositionAt } from "@lekoala/floating";
+import Squire from "squire-rte";
 import {
-  DEFAULT_TOOLBAR,
   isEditorEmpty,
   isSafeHref,
   matchSuggestionText,
   mentionFromElement,
   normalizeToolbar,
+  toolbarGroups,
 } from "./helpers.js";
 import { createSanitizeToDOMFragment } from "./sanitize.js";
 
@@ -46,8 +46,15 @@ import { createSanitizeToDOMFragment } from "./sanitize.js";
  *
  * @typedef {SuggestionContext & { range: Range }} ActiveSuggestionContext
  *
+ * @typedef {Object} ToolbarButtonOverride
+ * @property {string} [label] Accessible name and tooltip.
+ * @property {string | (() => Node)} [content] Visible content: a string is rendered as text; a function
+ *   returns a Node (e.g. an icon).
+ *
  * @typedef {Object} RichTextOptions
- * @property {string[] | string} [toolbar]
+ * @property {string[] | string} [toolbar] Commands in order; `|` separates groups.
+ * @property {Record<string, ToolbarButtonOverride>} [buttons] Per-command label/content overrides.
+ * @property {string} [toolbarLabel] Accessible name of the toolbar. Defaults to "Formatting".
  * @property {SuggestionProvider[]} [suggestions]
  * @property {(html: string, editor: Squire) => DocumentFragment} [sanitizeToDOMFragment]
  * @property {(context: { href: string, text: string, richText: RichText }) => string | null | Promise<string | null>} [requestLink]
@@ -64,6 +71,30 @@ const BUTTONS = {
   undo: { label: "Undo", text: "↶" },
   redo: { label: "Redo", text: "↷" },
 };
+
+/** Keys that never modify the document; any other key may replace a non-collapsed selection. */
+const NAVIGATION_KEYS = new Set([
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+  "ArrowUp",
+  "End",
+  "Home",
+  "PageDown",
+  "PageUp",
+  "Escape",
+  "Tab",
+  "Shift",
+  "Control",
+  "Alt",
+  "Meta",
+  "CapsLock",
+]);
+
+/** Squire uses zero-width spaces as caret placeholders; they are not content. */
+const INVISIBLE_TEXT = /^[​﻿]*$/;
+const BLOCK_BOUNDARY =
+  /^(?:ADDRESS|ARTICLE|ASIDE|BLOCKQUOTE|BR|DD|DIV|DL|DT|FIGURE|FOOTER|H[1-6]|HEADER|HR|LI|OL|P|PRE|SECTION|UL)$/;
 
 let uid = 0;
 
@@ -83,18 +114,25 @@ export class RichText {
     this.source = source;
     /** @type {{
      * toolbar: string[],
+     * buttons: Record<string, ToolbarButtonOverride>,
+     * toolbarLabel: string,
      * suggestions: SuggestionProvider[],
      * sanitizeToDOMFragment: (html: string, editor: Squire) => DocumentFragment,
      * requestLink: (context: { href: string, text: string, richText: RichText }) => string | null | Promise<string | null>
      * }} */
     this.options = {
       toolbar: normalizeToolbar(options.toolbar),
+      buttons: options.buttons ?? {},
+      toolbarLabel: options.toolbarLabel ?? "Formatting",
       suggestions: options.suggestions ?? [],
       sanitizeToDOMFragment: options.sanitizeToDOMFragment ?? createSanitizeToDOMFragment(),
       requestLink: options.requestLink ?? defaultLinkRequest,
     };
 
     this._controller = new AbortController();
+    /** @type {HTMLFormElement | null} */
+    this._form = null;
+    this._disposed = false;
     this._sourceWasHidden = source.hasAttribute("hidden");
     /** @type {{ label: HTMLLabelElement, id: string }[]} */
     this._generatedLabelIds = [];
@@ -107,6 +145,8 @@ export class RichText {
     /** @type {AbortController | null} */
     this._suggestionAbort = null;
     this._suggestionRevision = 0;
+    /** @type {{ node: Node, start: number, query: string, provider: SuggestionProvider } | null} */
+    this._suggestionKey = null;
     /** @type {ActiveSuggestionContext | null} */
     this._suggestionContext = null;
     /** @type {any[]} */
@@ -123,7 +163,7 @@ export class RichText {
     this.toolbar = source.ownerDocument.createElement("div");
     this.toolbar.className = "rt-toolbar";
     this.toolbar.setAttribute("role", "toolbar");
-    this.toolbar.setAttribute("aria-label", "Formatting");
+    this.toolbar.setAttribute("aria-label", this.options.toolbarLabel);
 
     this.surface = source.ownerDocument.createElement("div");
     this.surface.className = "rt-editor";
@@ -142,6 +182,7 @@ export class RichText {
       blockTag: "P",
       sanitizeToDOMFragment: this.options.sanitizeToDOMFragment,
     });
+    this._restrictShortcuts();
 
     this.suggestionPopup = this._createSuggestionPopup();
     this._bind();
@@ -154,17 +195,27 @@ export class RichText {
     return this.source.value;
   }
 
+  /**
+   * Disabled directly or through an ancestor `<fieldset disabled>`.
+   * @returns {boolean}
+   */
+  get disabled() {
+    return this.source.disabled || this.source.matches(":disabled");
+  }
+
   /** @returns {boolean} */
   get editable() {
-    return !this.source.disabled && !this.source.readOnly;
+    return !this.disabled && !this.source.readOnly;
   }
 
   focus() {
+    if (this._disposed) return;
     this.squire.focus();
   }
 
   /** Pull an externally changed textarea value into Squire. */
   sync() {
+    if (this._disposed) return this;
     this._setEditorHTML(this.source.value);
     this._syncEditableState();
     return this;
@@ -175,7 +226,7 @@ export class RichText {
    * @returns {this}
    */
   setHTML(html) {
-    this._setEditorHTML(html);
+    if (!this._disposed) this._setEditorHTML(html);
     return this;
   }
 
@@ -209,11 +260,14 @@ export class RichText {
     return this;
   }
 
-  /** Tear down generated UI and restore the source textarea. */
+  /** Tear down generated UI and restore the source textarea. Safe to call more than once. */
   dispose() {
+    if (this._disposed) return;
+    this._disposed = true;
     this._suggestionAbort?.abort();
     this._stopSuggestionAutoUpdate?.();
     this._controller.abort();
+    this._sourceObserver?.disconnect();
     this.squire.destroy();
     this.suggestionPopup.remove();
     this.shell.remove();
@@ -230,131 +284,34 @@ export class RichText {
   _bind() {
     const signal = this._controller.signal;
 
-    this.squire.addEventListener("input", () => {
-      if (this._settingEditor) return;
-      this._syncFromEditor(true);
-      if (!this._composing) this._updateSuggestion();
-    });
-    this.squire.addEventListener("pathChange", () => this._updateToolbarState());
-    this.squire.addEventListener("cursor", () => {
-      this._updateToolbarState();
-      if (!this._composing) this._updateSuggestion();
-    });
-    this.squire.addEventListener("select", () => {
-      this._updateToolbarState();
-      this._closeSuggestions();
-    });
-    this.squire.addEventListener("undoStateChange", (event) => {
-      const detail =
-        /** @type {CustomEvent<{ canUndo?: boolean, canRedo?: boolean }>} */ (event).detail;
-      this._canUndo = Boolean(detail?.canUndo);
-      this._canRedo = Boolean(detail?.canRedo);
-      this._updateToolbarState();
-    });
-    this.squire.addEventListener("pasteImage", (event) => {
-      event.preventDefault?.();
-    });
-
-    this.surface.addEventListener("keydown", (event) => this._onEditorKeydown(event), {
-      capture: true,
-      signal,
-    });
-    this.surface.addEventListener(
-      "compositionstart",
-      () => {
-        this._composing = true;
-        this._closeSuggestions();
-      },
-      { signal },
-    );
-    this.surface.addEventListener(
-      "compositionend",
-      () => {
-        this._composing = false;
-        queueMicrotask(() => this._updateSuggestion());
-      },
-      { signal },
-    );
-
-    this.toolbar.addEventListener("click", (event) => this._onToolbarClick(event), { signal });
-    this.toolbar.addEventListener("keydown", (event) => this._onToolbarKeydown(event), { signal });
-    this.toolbar.addEventListener("focusin", (event) => this._rememberToolbarButton(event.target), { signal });
-
-    this.shell.addEventListener(
-      "focusin",
-      (event) => {
-        const previous = event.relatedTarget;
-        if (!(previous instanceof Node) || !this.shell.contains(previous)) {
-          this._focusValue = this.source.value;
-        }
-        if (event.target !== this.surface && !this.surface.contains(/** @type {Node} */ (event.target))) {
-          this._closeSuggestions();
-        }
-      },
-      { signal },
-    );
-    this.shell.addEventListener(
-      "focusout",
-      () => {
-        queueMicrotask(() => {
-          const active = this.source.ownerDocument.activeElement;
-          if (active && this.shell.contains(active)) return;
-          this._closeSuggestions();
-          if (this.source.value !== this._focusValue) this._dispatchSource("change");
-        });
-      },
-      { signal },
-    );
-
-    this.source.addEventListener(
-      "input",
-      () => {
-        if (!this._dispatchingSource) this.sync();
-      },
-      { signal },
-    );
-    this.source.addEventListener(
-      "change",
-      () => {
-        if (!this._dispatchingSource) this.sync();
-      },
-      { signal },
-    );
-    this.source.addEventListener(
-      "invalid",
-      (event) => {
-        event.preventDefault();
-        this.focus();
-        this.source.dispatchEvent(
-          new CustomEvent("richtext:invalid", { bubbles: true, detail: { richText: this } }),
-        );
-      },
-      { signal },
-    );
-
-    const form = this.source.form;
-    form?.addEventListener(
-      "reset",
-      (event) => {
-        if (event.defaultPrevented) return;
-        queueMicrotask(() => this.sync());
-      },
-      { signal },
-    );
-
-    for (const label of this.source.labels ?? []) {
-      label.addEventListener(
-        "click",
-        (event) => {
-          if (event.defaultPrevented || !this.editable) return;
-          queueMicrotask(() => this.focus());
-        },
-        { signal },
-      );
+    // Every listener is this object (EventListener interface); handleEvent() routes the events.
+    for (const type of ["input", "pathChange", "cursor", "select", "undoStateChange", "pasteImage"]) {
+      this.squire.addEventListener(type, this);
     }
+
+    // Squire listens on its root in the capture phase, so at-target listeners run after it. Capturing on
+    // the shell (an ancestor) is the only way to act, and preventDefault(), before Squire handles a key.
+    // cut/paste/drop: a selection edge inside a mention would let Squire split it into partial mentions.
+    for (const type of ["keydown", "cut", "paste", "drop"]) {
+      this.shell.addEventListener(type, this, { capture: true, signal });
+    }
+    for (const type of ["mousedown", "click", "focusin", "focusout", "compositionstart", "compositionend"]) {
+      this.shell.addEventListener(type, this, { signal });
+    }
+    for (const type of ["input", "change", "invalid"]) {
+      this.source.addEventListener(type, this, { signal });
+    }
+    this._form = this.source.form;
+    this._form?.addEventListener("reset", this, { signal });
+    for (const label of this.source.labels ?? []) {
+      label.addEventListener("click", this, { signal });
+    }
+    // Outside pointerdown closes suggestions; pointerdown on a suggestion picks it without moving focus.
+    this.source.ownerDocument.addEventListener("pointerdown", this, { capture: true, signal });
 
     /** @type {MutationObserver} */
     this._sourceObserver = new MutationObserver(() => {
+      if (this._disposed) return;
       this._syncEditableState();
       this._copyAccessibility();
     });
@@ -372,34 +329,192 @@ export class RichText {
         "autocapitalize",
       ],
     });
-    signal.addEventListener("abort", () => this._sourceObserver?.disconnect(), { once: true });
+    // `<fieldset disabled>` disables the textarea without touching its own attributes.
+    for (let fieldset = this.source.parentElement?.closest("fieldset"); fieldset; ) {
+      this._sourceObserver.observe(fieldset, { attributes: true, attributeFilter: ["disabled"] });
+      fieldset = fieldset.parentElement?.closest("fieldset");
+    }
+  }
 
-    this.source.ownerDocument.addEventListener(
-      "pointerdown",
-      (event) => {
-        const target = event.target;
-        if (!(target instanceof Node)) return;
-        if (!this.shell.contains(target) && !this.suggestionPopup.contains(target)) this._closeSuggestions();
-      },
-      { capture: true, signal },
+  /**
+   * Single entry point for DOM and Squire listeners. Squire events are fresh CustomEvents that are never
+   * dispatched, so they are the only ones without a currentTarget.
+   * @param {Event} event
+   */
+  handleEvent(event) {
+    if (this._disposed) return;
+    const current = event.currentTarget;
+    if (!current) this._onSquireEvent(event);
+    else if (current === this.shell) this._onShellEvent(event);
+    else if (current === this.source) this._onSourceEvent(event);
+    else if (current === this._form) this._onFormReset(event);
+    else if (current === this.source.ownerDocument) this._onDocumentPointerdown(event);
+    else if (current instanceof HTMLLabelElement) this._onLabelClick(event);
+  }
+
+  /** @param {Event} event */
+  _onSquireEvent(event) {
+    switch (event.type) {
+      case "input":
+        if (this._settingEditor) return;
+        this._syncFromEditor(true);
+        if (!this._composing) this._updateSuggestion();
+        break;
+      case "pathChange":
+        this._updateToolbarState();
+        break;
+      case "cursor":
+        this._updateToolbarState();
+        if (!this._composing) this._updateSuggestion();
+        break;
+      case "select":
+        this._updateToolbarState();
+        this._closeSuggestions();
+        break;
+      case "undoStateChange": {
+        const detail = /** @type {CustomEvent<{ canUndo?: boolean, canRedo?: boolean }>} */ (event).detail;
+        this._canUndo = Boolean(detail?.canUndo);
+        this._canRedo = Boolean(detail?.canRedo);
+        this._updateToolbarState();
+        break;
+      }
+      case "pasteImage":
+        event.preventDefault();
+        break;
+    }
+  }
+
+  /** @param {Event} event */
+  _onShellEvent(event) {
+    const target = event.target instanceof Node ? event.target : null;
+    const inSurface = Boolean(target && (target === this.surface || this.surface.contains(target)));
+    const inToolbar = Boolean(target && this.toolbar.contains(target));
+
+    switch (event.type) {
+      case "keydown":
+        if (inSurface) this._onEditorKeydown(/** @type {KeyboardEvent} */ (event));
+        else if (inToolbar) this._onToolbarKeydown(/** @type {KeyboardEvent} */ (event));
+        break;
+      case "cut":
+      case "paste":
+      case "drop":
+        if (inSurface) this._selectWholeMentions();
+        break;
+      case "mousedown":
+        // Pointer use of the toolbar keeps focus, and the selection, in the editor. Keyboard users still
+        // reach the buttons with Tab (roving tabindex).
+        if (inToolbar && target instanceof Element && target.closest("button")) event.preventDefault();
+        break;
+      case "click":
+        if (inToolbar) this._onToolbarClick(event);
+        break;
+      case "compositionstart":
+        this._composing = true;
+        this._closeSuggestions();
+        break;
+      case "compositionend":
+        this._composing = false;
+        queueMicrotask(() => {
+          if (!this._disposed) this._updateSuggestion();
+        });
+        break;
+      case "focusin": {
+        const previous = /** @type {FocusEvent} */ (event).relatedTarget;
+        if (!(previous instanceof Node) || !this.shell.contains(previous)) {
+          this._focusValue = this.source.value;
+        }
+        if (inToolbar) this._rememberToolbarButton(target);
+        if (!inSurface) this._closeSuggestions();
+        break;
+      }
+      case "focusout":
+        queueMicrotask(() => {
+          if (this._disposed) return;
+          const active = this.source.ownerDocument.activeElement;
+          if (active && this.shell.contains(active)) return;
+          this._closeSuggestions();
+          if (this.source.value !== this._focusValue) this._dispatchSource("change");
+        });
+        break;
+    }
+  }
+
+  /** @param {Event} event */
+  _onSourceEvent(event) {
+    if (event.type !== "invalid") {
+      // input/change dispatched by external code after it changed textarea.value.
+      if (!this._dispatchingSource) this.sync();
+      return;
+    }
+    // The hidden textarea cannot show the native bubble. The visible editor takes focus instead, but
+    // only when it is the form's first invalid control, as native interactive validation would do.
+    event.preventDefault();
+    if (firstInvalidControl(this.source) === this.source) this.focus();
+    this.source.dispatchEvent(
+      new CustomEvent("richtext:invalid", { bubbles: true, detail: { richText: this } }),
     );
   }
 
+  /** @param {Event} event */
+  _onFormReset(event) {
+    if (event.defaultPrevented) return;
+    // Controls are reset after the event is dispatched.
+    queueMicrotask(() => {
+      this.sync();
+      this._focusValue = this.source.value;
+    });
+  }
+
+  /** @param {Event} event */
+  _onLabelClick(event) {
+    if (event.defaultPrevented || !this.editable) return;
+    // A wrapping label also receives clicks made inside the editor or its toolbar.
+    if (event.target instanceof Node && this.shell.contains(event.target)) return;
+    queueMicrotask(() => this.focus());
+  }
+
+  /** @param {Event} event */
+  _onDocumentPointerdown(event) {
+    const target = event.target;
+    if (!(target instanceof Node)) return;
+    if (this.suggestionPopup.contains(target)) {
+      const element = target instanceof Element ? target : target.parentElement;
+      const option = element?.closest("[role=option]");
+      if (!(option instanceof HTMLElement)) return;
+      // Keep focus (and the caret) in the editor.
+      event.preventDefault();
+      const index = Number(option.dataset.index);
+      if (Number.isInteger(index)) this._selectSuggestion(index);
+    } else if (!this.shell.contains(target)) {
+      this._closeSuggestions();
+    }
+  }
+
   _buildToolbar() {
+    const doc = this.source.ownerDocument;
     this.toolbar.replaceChildren();
-    const commands = this.options.toolbar ?? DEFAULT_TOOLBAR;
-    for (const command of commands) {
-      const config = BUTTONS[command];
-      if (!config) continue;
-      const button = this.source.ownerDocument.createElement("button");
-      button.type = "button";
-      button.className = "rt-button";
-      button.dataset.command = command;
-      button.setAttribute("aria-label", config.label);
-      button.title = config.label;
-      button.textContent = config.text;
-      if (config.toggle) button.setAttribute("aria-pressed", "false");
-      this.toolbar.append(button);
+    for (const commands of toolbarGroups(this.options.toolbar)) {
+      const group = doc.createElement("div");
+      group.className = "rt-group";
+      group.setAttribute("role", "group");
+      for (const command of commands) {
+        const config = BUTTONS[command];
+        if (!config) continue;
+        const override = this.options.buttons[command] ?? {};
+        const label = override.label ?? config.label;
+        const button = doc.createElement("button");
+        button.type = "button";
+        button.className = "rt-button";
+        button.dataset.command = command;
+        button.setAttribute("aria-label", label);
+        button.title = label;
+        const content = typeof override.content === "function" ? override.content() : override.content;
+        if (content instanceof Node) button.append(content);
+        else button.textContent = content ?? config.text;
+        if (config.toggle) button.setAttribute("aria-pressed", "false");
+        group.append(button);
+      }
+      if (group.children.length) this.toolbar.append(group);
     }
     this.toolbar.hidden = !this.toolbar.children.length;
     this._syncToolbarTabStops();
@@ -410,7 +525,8 @@ export class RichText {
     const buttons = [...this.toolbar.querySelectorAll("button:not(:disabled)")].filter(
       (button) => button instanceof HTMLButtonElement,
     );
-    const target = preferred && buttons.includes(preferred) ? preferred : buttons[0] ?? null;
+    const current = buttons.find((button) => button.tabIndex === 0) ?? null;
+    const target = preferred && buttons.includes(preferred) ? preferred : (current ?? buttons[0] ?? null);
     for (const button of buttons) button.tabIndex = button === target ? 0 : -1;
   }
 
@@ -444,12 +560,12 @@ export class RichText {
     buttons[index].focus();
   }
 
-  /** @param {MouseEvent} event */
+  /** @param {Event} event */
   async _onToolbarClick(event) {
     const button = event.target instanceof Element ? event.target.closest("button[data-command]") : null;
     if (!(button instanceof HTMLButtonElement) || button.disabled || !this.editable) return;
     await this._executeCommand(button.dataset.command ?? "");
-    this._updateToolbarState();
+    if (!this._disposed) this._updateToolbarState();
   }
 
   /** @param {string} command */
@@ -489,18 +605,17 @@ export class RichText {
   async _toggleLink() {
     const editor = this.squire;
     const range = editor.getSelection();
-    let node = range.startContainer instanceof Element ? range.startContainer : range.startContainer.parentElement;
-    const link = node?.closest?.("a") ?? null;
+    const node =
+      range.startContainer instanceof Element ? range.startContainer : range.startContainer.parentElement;
+    const link = node?.closest("a") ?? null;
     const href = link?.getAttribute("href") ?? "";
     const text = editor.getSelectedText();
     const next = await this.options.requestLink({ href, text, richText: this });
-    if (next == null) return;
-    if (!next.trim()) {
-      editor.removeLink();
-      editor.focus();
-      return;
-    }
-    if (!isSafeHref(next)) {
+    if (next == null || this._disposed) return;
+
+    editor.focus();
+    const value = next.trim();
+    if (value && !isSafeHref(value)) {
       this.source.dispatchEvent(
         new CustomEvent("richtext:linkerror", {
           bubbles: true,
@@ -509,8 +624,16 @@ export class RichText {
       );
       return;
     }
-    editor.makeLink(next.trim());
-    editor.focus();
+
+    // Squire's link commands act on the selection: from a bare caret inside a link, makeLink would insert
+    // the URL as new text and removeLink would do nothing. Edit the whole existing link instead.
+    if (link?.isConnected && this.surface.contains(link) && editor.getSelection().collapsed) {
+      const whole = this.source.ownerDocument.createRange();
+      whole.selectNodeContents(link);
+      editor.setSelection(whole);
+    }
+    if (value) editor.makeLink(value);
+    else editor.removeLink();
   }
 
   _updateToolbarState() {
@@ -540,11 +663,26 @@ export class RichText {
 
   /** @param {boolean} dispatchInput */
   _syncFromEditor(dispatchInput) {
-    const html = isEditorEmpty(this.surface) ? "" : this.squire.getHTML();
+    if (this._disposed) return;
+    const html = isEditorEmpty(this.surface) ? "" : this._serialize();
     const changed = this.source.value !== html;
     this.source.value = html;
-    this.surface.dataset.empty = String(!html);
+    this._setSurfaceAttributes({ "data-empty": String(!html) });
     if (changed && dispatchInput) this._dispatchSource("input");
+  }
+
+  /**
+   * The vocabulary has no inline styles, but anything that restyles the live editor (browser extensions,
+   * test harnesses hiding the caret) writes `style` into it. That must never reach the form value.
+   * @returns {string}
+   */
+  _serialize() {
+    const html = this.squire.getHTML();
+    if (!html.includes("style=")) return html;
+    const template = this.source.ownerDocument.createElement("template");
+    template.innerHTML = html;
+    for (const element of template.content.querySelectorAll("[style]")) element.removeAttribute("style");
+    return template.innerHTML;
   }
 
   /** @param {string} type */
@@ -570,32 +708,62 @@ export class RichText {
       labelledBy.push(label.id);
     }
 
-    const explicitLabel = source.getAttribute("aria-label");
-    if (explicitLabel) this.surface.setAttribute("aria-label", explicitLabel);
-    else this.surface.removeAttribute("aria-label");
-
-    if (labelledBy.length) this.surface.setAttribute("aria-labelledby", labelledBy.join(" "));
-    else this.surface.removeAttribute("aria-labelledby");
-
-    copyAttribute(source, this.surface, "aria-describedby");
-    copyAttribute(source, this.surface, "aria-invalid");
-    this.surface.setAttribute("aria-required", String(source.required));
-    this.surface.spellcheck = source.spellcheck;
-    const autocapitalize = source.getAttribute("autocapitalize");
-    if (autocapitalize == null) this.surface.removeAttribute("autocapitalize");
-    else this.surface.setAttribute("autocapitalize", autocapitalize);
-    this.surface.dataset.placeholder = source.placeholder || "";
+    this._setSurfaceAttributes({
+      "aria-label": source.getAttribute("aria-label") || null,
+      "aria-labelledby": labelledBy.length ? labelledBy.join(" ") : null,
+      "aria-describedby": source.getAttribute("aria-describedby"),
+      "aria-invalid": source.getAttribute("aria-invalid"),
+      "aria-required": String(source.required),
+      spellcheck: String(source.spellcheck),
+      autocapitalize: source.getAttribute("autocapitalize"),
+      "data-placeholder": source.placeholder || "",
+    });
   }
 
   _syncEditableState() {
-    const editable = this.editable;
-    this.surface.setAttribute("contenteditable", String(editable));
-    this.surface.tabIndex = this.source.disabled ? -1 : 0;
-    this.surface.setAttribute("aria-disabled", String(this.source.disabled));
-    this.surface.setAttribute("aria-readonly", String(this.source.readOnly));
-    this.shell.toggleAttribute("data-disabled", this.source.disabled);
+    const disabled = this.disabled;
+    this._setSurfaceAttributes({
+      contenteditable: String(this.editable),
+      tabindex: disabled ? "-1" : "0",
+      "aria-disabled": String(disabled),
+      "aria-readonly": String(this.source.readOnly),
+    });
+    this.shell.toggleAttribute("data-disabled", disabled);
     this.shell.toggleAttribute("data-readonly", this.source.readOnly);
+    if (!this.editable) this._closeSuggestions();
     this._updateToolbarState();
+  }
+
+  /**
+   * Squire observes attribute mutations on its root and reports them as document edits (input event,
+   * undo state). Component state attributes are therefore written outside its observer, and only when
+   * they actually change; otherwise every write would trigger an input that writes again.
+   * @param {Record<string, string | null>} attributes
+   */
+  _setSurfaceAttributes(attributes) {
+    const surface = this.surface;
+    const changes = Object.entries(attributes).filter(
+      ([name, value]) => surface.getAttribute(name) !== value,
+    );
+    if (!changes.length) return;
+    const apply = () => {
+      for (const [name, value] of changes) {
+        if (value == null) surface.removeAttribute(name);
+        else surface.setAttribute(name, value);
+      }
+    };
+    if (this.squire) this.squire.modifyDocument(apply);
+    else apply();
+  }
+
+  /** Squire ships shortcuts for tags outside the default vocabulary (underline, strike, sub/sup, code). */
+  _restrictShortcuts() {
+    for (const modifier of ["Ctrl-", "Meta-"]) {
+      // Without a handler, Ctrl+U would fall through to the browser's native underline command.
+      this.squire.setKeyHandler(`${modifier}u`, (_editor, event) => event.preventDefault());
+      for (const key of ["Shift-5", "Shift-6", "Shift-7", "d"])
+        this.squire.setKeyHandler(`${modifier}${key}`, null);
+    }
   }
 
   /** @returns {HTMLDivElement} */
@@ -609,28 +777,22 @@ export class RichText {
     if ("showPopover" in popup) popup.setAttribute("popover", "manual");
     doc.body.append(popup);
 
-    this.surface.setAttribute("aria-autocomplete", "list");
-    this.surface.setAttribute("aria-haspopup", "listbox");
-    this.surface.setAttribute("aria-controls", popup.id);
-    this.surface.setAttribute("aria-expanded", "false");
+    if (this.options.suggestions.length) {
+      this._setSurfaceAttributes({
+        "aria-autocomplete": "list",
+        "aria-haspopup": "listbox",
+        "aria-controls": popup.id,
+        "aria-expanded": "false",
+      });
+    }
 
-    popup.addEventListener(
-      "pointerdown",
-      (event) => {
-        const option = event.target instanceof Element ? event.target.closest("[role=option]") : null;
-        if (!(option instanceof HTMLElement)) return;
-        event.preventDefault();
-        const index = Number(option.dataset.index);
-        if (Number.isInteger(index)) this._selectSuggestion(index);
-      },
-      { signal: this._controller.signal },
-    );
     return popup;
   }
 
   /** @param {KeyboardEvent} event */
   _onEditorKeydown(event) {
-    if (event.isComposing) return;
+    // keyCode 229: WebKit delivers the IME-confirming Enter after compositionend, with isComposing=false.
+    if (event.isComposing || event.keyCode === 229 || !this.editable) return;
 
     if (this._suggestionItems.length) {
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -655,7 +817,22 @@ export class RichText {
 
     if ((event.key === "Backspace" || event.key === "Delete") && this._removeAdjacentMention(event.key)) {
       event.preventDefault();
+      return;
     }
+    if (!NAVIGATION_KEYS.has(event.key)) this._selectWholeMentions();
+  }
+
+  /** Grow a non-collapsed selection so that it never starts or ends inside a mention. */
+  _selectWholeMentions() {
+    const range = this.squire.getSelection();
+    if (range.collapsed) return;
+    const start = closestMention(range.startContainer, this.surface);
+    const end = closestMention(range.endContainer, this.surface);
+    if (!start && !end) return;
+    const next = range.cloneRange();
+    if (start) next.setStartBefore(start);
+    if (end) next.setEndAfter(end);
+    this.squire.setSelection(next);
   }
 
   /** @param {string} key @returns {boolean} */
@@ -665,11 +842,12 @@ export class RichText {
     const mention = adjacentMention(range, key === "Backspace" ? -1 : 1, this.surface);
     if (!mention) return false;
 
+    const detail = mentionFromElement(mention);
+    // Saving the undo state inserts/removes bookmarks and merges text nodes: read positions afterwards.
+    this.squire.saveUndoState(range.cloneRange());
     const parent = mention.parentNode;
     if (!parent) return false;
     const index = [...parent.childNodes].indexOf(mention);
-    this.squire.saveUndoState(range.cloneRange());
-    const detail = mentionFromElement(mention);
     mention.remove();
 
     const next = this.source.ownerDocument.createRange();
@@ -678,37 +856,44 @@ export class RichText {
     this.squire.setSelection(next);
     this.squire.focus();
     queueMicrotask(() => this._syncFromEditor(true));
-    this.source.dispatchEvent(
-      new CustomEvent("richtext:mentionremove", { bubbles: true, detail }),
-    );
+    this.source.dispatchEvent(new CustomEvent("richtext:mentionremove", { bubbles: true, detail }));
     return true;
   }
 
   async _updateSuggestion() {
     const providers = this.options.suggestions ?? [];
-    if (!providers.length || this._composing || !this.editable) {
+    const reset = () => {
+      this._suggestionKey = null;
       this._closeSuggestions();
-      return;
-    }
+    };
+    if (!providers.length || this._composing || !this.editable) return reset();
 
     const range = this.squire.getSelection();
-    if (!range.collapsed || !(range.startContainer instanceof Text)) {
-      this._closeSuggestions();
-      return;
-    }
+    if (!range.collapsed || !(range.startContainer instanceof Text)) return reset();
 
     const textBeforeCaret = range.startContainer.data.slice(0, range.startOffset);
-    const match = matchSuggestionText(textBeforeCaret, providers.map((provider) => provider.trigger));
-    if (!match) {
-      this._closeSuggestions();
-      return;
-    }
+    const match = matchSuggestionText(
+      textBeforeCaret,
+      providers.map((provider) => provider.trigger),
+    );
+    if (!match) return reset();
 
     const provider = providers.find((entry) => entry.trigger === match.trigger);
-    if (!provider || match.query.length < (provider.minChars ?? 0)) {
-      this._closeSuggestions();
+    if (!provider || match.query.length < (provider.minChars ?? 0)) return reset();
+
+    // One query is handled once: Squire reports both `input` and `cursor` for a keystroke, and a query the
+    // user dismissed with Escape (or that returned nothing) must not reopen on the next caret event.
+    const previous = this._suggestionKey;
+    if (
+      previous &&
+      previous.node === range.startContainer &&
+      previous.start === match.start &&
+      previous.query === match.query &&
+      previous.provider === provider
+    ) {
       return;
     }
+    this._suggestionKey = { node: range.startContainer, start: match.start, query: match.query, provider };
 
     const replaceRange = this.source.ownerDocument.createRange();
     replaceRange.setStart(range.startContainer, match.start);
@@ -725,9 +910,18 @@ export class RichText {
       richText: this,
     };
 
+    // Rows of the previous query stay visible while this search runs. If one is picked meanwhile, it must
+    // replace the whole current query, not the shorter one it was found for.
+    if (this._suggestionItems.length) {
+      if (this._suggestionProvider === provider)
+        this._suggestionContext = { ...context, range: replaceRange };
+      else this._hideSuggestionRows();
+    }
+
     try {
       const items = await provider.search(match.query, context);
       if (controller.signal.aborted || revision !== this._suggestionRevision) return;
+      this._suggestionAbort = null;
       if (!Array.isArray(items) || !items.length) {
         this._closeSuggestions();
         return;
@@ -778,7 +972,7 @@ export class RichText {
         // Hidden=false remains the functional fallback.
       }
     }
-    this.surface.setAttribute("aria-expanded", "true");
+    this._setSurfaceAttributes({ "aria-expanded": "true" });
     this._positionSuggestion();
     this._stopSuggestionAutoUpdate?.();
     this._stopSuggestionAutoUpdate = autoUpdate(null, this.suggestionPopup, () => this._positionSuggestion());
@@ -803,18 +997,18 @@ export class RichText {
       const selected = Number(option.dataset.index) === this._activeSuggestion;
       option.setAttribute("aria-selected", String(selected));
       if (selected) {
-        this.surface.setAttribute("aria-activedescendant", option.id);
+        this._setSurfaceAttributes({ "aria-activedescendant": option.id });
         option.scrollIntoView({ block: "nearest" });
       }
     }
   }
 
   /** @param {number} index */
-  async _selectSuggestion(index) {
+  _selectSuggestion(index) {
     const provider = this._suggestionProvider;
     const context = this._suggestionContext;
     const item = this._suggestionItems[index];
-    if (!provider || !context || item === undefined) return;
+    if (!provider || !context || item === undefined || !this.editable) return;
 
     /** @type {SuggestionInsert} */
     let insertion;
@@ -831,6 +1025,8 @@ export class RichText {
       insertion = { type: "text", text: suggestionLabel(provider, item) };
     }
 
+    // Close first: the insertion below changes the caret, which would otherwise start a new search.
+    this._closeSuggestions();
     this.squire.setSelection(context.range);
     if (insertion.type === "mention") {
       this._insertMention(
@@ -849,7 +1045,6 @@ export class RichText {
       this.squire.insertPlainText(insertion.text, false);
     }
 
-    this._closeSuggestions();
     this.squire.focus();
   }
 
@@ -874,13 +1069,18 @@ export class RichText {
     this._suggestionAbort?.abort();
     this._suggestionAbort = null;
     this._suggestionRevision += 1;
+    this._hideSuggestionRows();
+  }
+
+  _hideSuggestionRows() {
     this._suggestionItems = [];
     this._suggestionProvider = null;
     this._suggestionContext = null;
     this._stopSuggestionAutoUpdate?.();
     this._stopSuggestionAutoUpdate = null;
-    this.surface.removeAttribute("aria-activedescendant");
-    this.surface.setAttribute("aria-expanded", "false");
+    if (this.options.suggestions.length) {
+      this._setSurfaceAttributes({ "aria-activedescendant": null, "aria-expanded": "false" });
+    }
 
     if (this.suggestionPopup?.hasAttribute("popover")) {
       try {
@@ -901,47 +1101,78 @@ function defaultLinkRequest({ href }) {
   return window.prompt("Link URL", href || "https://");
 }
 
-/** @param {Element} from @param {Element} to @param {string} name */
-function copyAttribute(from, to, name) {
-  const value = from.getAttribute(name);
-  if (value == null) to.removeAttribute(name);
-  else to.setAttribute(name, value);
-}
-
 /** @param {SuggestionProvider} provider @param {any} item @returns {string} */
 function suggestionLabel(provider, item) {
   return String(provider.getLabel?.(item) ?? item?.label ?? item?.name ?? item ?? "");
 }
 
-/** @param {Range} range @param {-1 | 1} direction @param {HTMLElement} root @returns {HTMLElement | null} */
+/** @param {Node} node @param {HTMLElement} root @returns {HTMLElement | null} */
+function closestMention(node, root) {
+  const element = node instanceof Element ? node : node.parentElement;
+  const mention = element?.closest("[data-rt-mention]");
+  return mention instanceof HTMLElement && mention !== root && root.contains(mention) ? mention : null;
+}
+
+/**
+ * The node next to `node` in `direction`, climbing out of inline wrappers but never out of a block.
+ * @param {Node} node @param {-1 | 1} direction @param {HTMLElement} root @returns {Node | null}
+ */
+function stepOut(node, direction, root) {
+  /** @type {Node | null} */
+  let current = node;
+  while (current && current !== root) {
+    const sibling = direction < 0 ? current.previousSibling : current.nextSibling;
+    if (sibling) return sibling;
+    current = current.parentNode;
+    if (current instanceof Element && BLOCK_BOUNDARY.test(current.nodeName)) return null;
+  }
+  return null;
+}
+
+/**
+ * The mention that Backspace (-1) or Delete (1) at a collapsed caret would reach first, if any.
+ * Empty/zero-width text and inline wrappers (b, i, a…) between the caret and the mention are skipped;
+ * visible text, line breaks and block boundaries are not.
+ * @param {Range} range @param {-1 | 1} direction @param {HTMLElement} root @returns {HTMLElement | null}
+ */
 function adjacentMention(range, direction, root) {
-  let node = range.startContainer;
-  let offset = range.startOffset;
+  const container = range.startContainer;
+  const offset = range.startOffset;
+  const inside = closestMention(container, root);
+  if (inside) return inside;
 
-  if (node instanceof Text) {
-    if (direction < 0 && offset > 0) return null;
-    if (direction > 0 && offset < node.length) return null;
-    const sibling = direction < 0 ? node.previousSibling : node.nextSibling;
-    if (sibling) node = sibling;
-    else {
-      while (node.parentNode && node.parentNode !== root) {
-        const parent = node.parentNode;
-        const next = direction < 0 ? parent.previousSibling : parent.nextSibling;
-        if (next) {
-          node = next;
-          break;
-        }
-        node = parent;
-      }
-    }
+  /** @type {Node | null} */
+  let node;
+  if (container instanceof Text) {
+    const rest = direction < 0 ? container.data.slice(0, offset) : container.data.slice(offset);
+    if (!INVISIBLE_TEXT.test(rest)) return null;
+    node = stepOut(container, direction, root);
   } else {
-    const index = direction < 0 ? offset - 1 : offset;
-    node = node.childNodes[index] ?? node;
+    node = container.childNodes[direction < 0 ? offset - 1 : offset] ?? stepOut(container, direction, root);
   }
 
-  if (node instanceof Text && !node.data.length) {
-    const sibling = direction < 0 ? node.previousSibling : node.nextSibling;
-    if (sibling) node = sibling;
+  while (node) {
+    if (node instanceof Text) {
+      if (!INVISIBLE_TEXT.test(node.data)) return null;
+      node = stepOut(node, direction, root);
+    } else if (node instanceof HTMLElement) {
+      if (node.hasAttribute("data-rt-mention")) return node;
+      if (BLOCK_BOUNDARY.test(node.nodeName)) return null;
+      node = (direction < 0 ? node.lastChild : node.firstChild) ?? stepOut(node, direction, root);
+    } else {
+      node = stepOut(node, direction, root);
+    }
   }
-  return node instanceof HTMLElement && node.hasAttribute("data-rt-mention") ? node : null;
+  return null;
+}
+
+/** @param {HTMLTextAreaElement} source @returns {Element | null} */
+function firstInvalidControl(source) {
+  const controls = source.form ? [...source.form.elements] : [source];
+  return (
+    controls.find((control) => {
+      const field = /** @type {HTMLTextAreaElement} */ (control);
+      return field.willValidate === true && !field.validity.valid;
+    }) ?? null
+  );
 }

@@ -1,0 +1,385 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rich text × Actual</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/actual-css@0.10.0/dist/actual.full.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/lekoala/actual-css@master/demo/assets/actual-themes.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.46.0/dist/tabler-icons.min.css">
+  <link rel="stylesheet" href="../src/rich-text.css">
+  <script src="https://cdn.jsdelivr.net/gh/lekoala/actual-css@master/demo/scripts/theme-picker.js"></script>
+  <style>
+    /* Page chrome, same as the Actual demo templates. */
+    .page { --center-size: 60rem; padding-block: var(--space-50) var(--space-60); }
+    .page-header { align-items: flex-start; }
+    .page-cards { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-50); }
+    .page-note {
+      display: flex; flex-wrap: wrap; gap: var(--space-20) var(--space-30); align-items: baseline;
+      justify-content: space-between; padding-block-start: var(--space-30);
+      border-block-start: var(--border-width) solid var(--border); color: var(--text-muted); font-size: var(--font-size-sm);
+    }
+    .page-note code { color: var(--text); }
+    .output { margin: 0; max-block-size: 12rem; overflow: auto; }
+    .sent-log { margin: 0; padding: var(--space-20) var(--space-30); border: var(--border-width) dashed var(--border); border-radius: var(--radius); color: var(--text-muted); font-size: var(--font-size-sm); }
+    .sent-log:empty::before { content: "Nothing sent yet — write a message and press Ctrl+Enter."; }
+    .suggestion-row { display: grid; line-height: 1.3; }
+    .suggestion-row small { color: var(--text-muted); }
+    .states { display: grid; gap: var(--space-40); grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); }
+  </style>
+  <style id="bridge">
+    /* ================================================================
+       THEME BRIDGE — the whole skin in one block.
+       --rt-* tokens are fed from Actual tokens. The suggestion popover is appended to <body>,
+       so it needs the tokens on itself: it does not inherit from the editor.
+       ================================================================ */
+
+    /* 1. Tokens */
+    .actual-rich-text .rt-shell,
+    .rt-suggestions {
+      --rt-bg: var(--surface);
+      --rt-fg: var(--text);
+      --rt-border: var(--form-invalid-border, var(--control-border, var(--border)));
+      --rt-muted: var(--text-muted);
+      --rt-focus: var(--form-invalid-border, var(--focus));
+      --rt-focus-width: var(--focus-ring-width);
+      --rt-radius: var(--radius);
+      --rt-pad: var(--space-20) var(--control-pad-x);
+      --rt-font-size: var(--control-font-size);
+      --rt-min-height: 10rem;
+      --rt-toolbar-bg: var(--surface-subtle);
+      --rt-button-hover: var(--hover-overlay);
+      --rt-button-pressed-bg: var(--state-selected);
+      --rt-button-pressed-fg: var(--state-selected-fg);
+      --rt-disabled-bg: var(--surface-subtle);
+      --rt-disabled-fg: var(--state-disabled);
+      --rt-link: var(--primary);
+      --rt-quote-border: var(--border);
+      --rt-mention-bg: color-mix(in oklab, var(--surface) var(--soft-bg-mix), var(--primary));
+      --rt-mention-fg: color-mix(in oklab, var(--primary) var(--soft-fg-mix), var(--text));
+      --rt-suggestion-bg: var(--surface-raised);
+      --rt-suggestion-active: var(--hover-overlay);
+      --rt-suggestion-shadow: var(--shadow-popout);
+    }
+
+    /* 2. Surface: hover like .textarea, transitions like every control */
+    .actual-rich-text .rt-shell {
+      transition: border-color var(--duration), background-color var(--duration), color var(--duration);
+    }
+    .actual-rich-text .rt-shell:hover:not([data-disabled], [data-readonly]) {
+      --control-border: var(--control-hover-border, var(--text-subtle));
+    }
+    .actual-rich-text .rt-button { border-radius: var(--radius-sm); font-size: var(--font-size-md); }
+
+    /* 3. Invalid: the hidden textarea owns validity; the wrapper re-owns the Actual hook */
+    .actual-rich-text:has(textarea[aria-invalid="true"]),
+    .needs-validation.was-validated .actual-rich-text:has(textarea:invalid) {
+      --form-invalid-border: var(--danger);
+    }
+
+    /* 4. Content */
+    .actual-rich-text .rt-editor :is(p, ul, ol, blockquote) { margin-block: 0 var(--space-20); }
+    .actual-rich-text .rt-editor > :last-child { margin-block-end: 0; }
+    .actual-rich-text .rt-editor [data-rt-mention] {
+      border-radius: var(--radius-full);
+      font-weight: var(--font-weight-medium);
+    }
+    .rt-suggestion { font-size: var(--control-font-size); }
+
+    /* 5. Composer: one surface; the toolbar shares the actions row.
+       display: contents lifts the editor and toolbar into the composer grid (tokens still inherit). */
+    .rt-composer {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      grid-template-areas: "editor editor" "toolbar actions";
+      align-items: center;
+      border: var(--border-width) solid var(--form-invalid-border, var(--border));
+      border-radius: var(--radius-lg);
+      background: var(--surface);
+      transition: border-color var(--duration);
+    }
+    .rt-composer:hover { border-color: var(--form-invalid-border, var(--control-hover-border, var(--text-subtle))); }
+    .rt-composer:has(.rt-editor:focus-visible) {
+      outline: var(--focus-ring-width) solid var(--form-invalid-border, var(--focus));
+      outline-offset: calc(var(--focus-ring-width) * -1);
+    }
+    .rt-composer rich-text,
+    .rt-composer .rt-shell { display: contents; }
+    .rt-composer .rt-shell {
+      --rt-min-height: 3rem;
+      --rt-max-height: 18rem;
+      --rt-pad: var(--space-30) var(--control-pad-x) var(--space-10);
+    }
+    .rt-composer .rt-editor { grid-area: editor; }
+    .rt-composer .rt-toolbar {
+      grid-area: toolbar;
+      padding: var(--space-10) 0 var(--space-20) var(--space-20);
+      border: 0;
+      background: transparent;
+    }
+    .rt-composer-actions {
+      grid-area: actions;
+      --cluster-justify: space-between;
+      align-items: center;
+      padding: var(--space-10) var(--space-30) var(--space-20) var(--space-20);
+    }
+  </style>
+</head>
+<body>
+  <main class="center stack page">
+    <header class="cluster page-header">
+      <hgroup>
+        <p class="overline">Integration</p>
+        <h1>Rich text × Actual CSS</h1>
+        <p class="muted">
+          <code>&lt;rich-text&gt;</code> with its own behaviour (Squire, sanitizer, mentions, suggestions); the skin is
+          one block of Actual tokens. Switch themes: toolbar, surface, focus, states, mentions and the suggestion
+          popover follow.
+        </p>
+      </hgroup>
+      <div class="cluster" style="gap: var(--space-20);">
+        <theme-picker><select class="select sm fit" aria-label="Switch theme"></select></theme-picker>
+        <a class="btn neutral outline sm" href="index.html">Generic demo</a>
+      </div>
+    </header>
+
+    <div class="page-cards">
+      <section class="card stack">
+        <header>
+          <hgroup>
+            <h2 style="margin: 0;">Team note</h2>
+            <p class="muted">
+              Tabler icons through the <code>buttons</code> option, groups through <code>|</code>, links through an
+              Actual <code>&lt;dialog&gt;</code> via <code>requestLink</code>. Type <code>@al</code> or <code>/</code>.
+            </p>
+          </hgroup>
+        </header>
+        <form class="needs-validation stack" id="note-form" novalidate>
+          <div class="field actual-rich-text">
+            <label class="field-label" for="note">Team note</label>
+            <rich-text class="js-actual" id="note-editor">
+              <textarea id="note" name="note" rows="8" required aria-describedby="note-help note-error" placeholder="Write a note…"><p>Hello, <strong>team</strong>!</p><ul><li>Ship the update</li><li>Review on Friday with <span data-rt-mention="user" data-id="u3" contenteditable="false">@Maria Lopez</span></li></ul></textarea>
+            </rich-text>
+            <span class="field-help" id="note-help">Bold, italic, lists, quotes and links only. Pasted content is cleaned on entry.</span>
+            <span class="field-error" id="note-error">The note cannot be empty.</span>
+          </div>
+          <div class="form-actions" style="margin-block-start: 0;">
+            <button type="submit" class="btn primary sm">Preview submitted value</button>
+            <button type="reset" class="btn neutral outline sm">Reset</button>
+          </div>
+        </form>
+        <pre class="output" aria-live="polite"><code id="note-output">(nothing submitted yet)</code></pre>
+      </section>
+
+      <section class="card stack">
+        <header>
+          <hgroup>
+            <h2 style="margin: 0;">Composer</h2>
+            <p class="muted">
+              The composer recipe around a rich editor. <code>Enter</code> stays a paragraph; sending is
+              <code>Ctrl/Cmd+Enter</code> or the send button. Attachments and actions belong to the composer, not
+              to the serialized HTML.
+            </p>
+          </hgroup>
+        </header>
+        <form class="rt-composer actual-rich-text" id="chat-form">
+          <rich-text class="js-actual" id="chat-editor" toolbar="bold italic | link">
+            <textarea id="chat" name="message" required aria-label="Message" placeholder="Write a message… (@ to mention, / for snippets)"></textarea>
+          </rich-text>
+          <div class="rt-composer-actions cluster">
+            <div class="cluster">
+              <button class="btn neutral ghost icon-only sm" type="button" id="chat-attach" aria-label="Attach file" title="Attach file"><i class="ti ti-paperclip" aria-hidden="true"></i></button>
+              <button class="btn neutral ghost sm" type="button" id="chat-snippet">Snippet</button>
+              <button class="btn neutral ghost sm" type="button" id="chat-mention">Mention</button>
+            </div>
+            <button class="btn primary icon-only sm" type="submit" aria-label="Send (Ctrl+Enter)" title="Send (Ctrl+Enter)"><i class="ti ti-send" aria-hidden="true"></i></button>
+          </div>
+        </form>
+        <p class="sent-log" id="chat-log" role="status" aria-live="polite"></p>
+      </section>
+
+      <section class="card stack">
+        <header>
+          <hgroup>
+            <h2 style="margin: 0;">States</h2>
+            <p class="muted">Authored on the textarea, mirrored to the editor, styled by the same Actual hooks as native controls.</p>
+          </hgroup>
+        </header>
+        <div class="states">
+          <div class="field actual-rich-text">
+            <label class="field-label" for="state-invalid">Invalid</label>
+            <rich-text class="js-actual" toolbar="bold italic"><textarea id="state-invalid" aria-invalid="true" aria-describedby="state-invalid-error"><p>This note needs review.</p></textarea></rich-text>
+            <span class="field-error" id="state-invalid-error">Please review this note.</span>
+          </div>
+          <div class="field actual-rich-text">
+            <label class="field-label" for="state-readonly">Readonly</label>
+            <rich-text class="js-actual" toolbar="bold italic"><textarea id="state-readonly" readonly><p>Signed off by <span data-rt-mention="user" data-id="u1" contenteditable="false">@Alice Martin</span>.</p></textarea></rich-text>
+          </div>
+          <div class="field actual-rich-text">
+            <label class="field-label" for="state-disabled">Disabled</label>
+            <rich-text class="js-actual" toolbar="bold italic"><textarea id="state-disabled" disabled><p>Editing is unavailable while offline.</p></textarea></rich-text>
+          </div>
+        </div>
+      </section>
+
+      <section class="card stack">
+        <header>
+          <hgroup>
+            <h2 style="margin: 0;">Bridge contract</h2>
+            <p class="muted">The complete skin used on this page (read live from the page's <code>&lt;style id="bridge"&gt;</code>).</p>
+          </hgroup>
+        </header>
+        <pre class="output" style="max-block-size: 24rem;"><code id="bridge-source"></code></pre>
+      </section>
+    </div>
+
+    <dialog class="dialog" id="link-dialog" aria-labelledby="link-title">
+      <form method="dialog" class="stack" id="link-form" novalidate>
+        <h2 id="link-title" style="margin: 0; font-size: var(--font-size-lg);">Link</h2>
+        <label class="field">
+          <span class="field-label">URL (http, https, mailto, tel or relative)</span>
+          <input class="input" type="text" id="link-url" placeholder="https://example.com" aria-describedby="link-error">
+          <span class="field-error" id="link-error">This kind of link is not allowed.</span>
+        </label>
+        <p class="muted" style="margin: 0; font-size: var(--font-size-sm);">Leave empty to remove the link.</p>
+        <div class="form-actions">
+          <button class="btn neutral outline sm" type="submit" value="cancel" formnovalidate>Cancel</button>
+          <button class="btn primary sm" type="submit" value="save">Apply</button>
+        </div>
+      </form>
+    </dialog>
+
+    <footer class="page-note">
+      <span>Actual from jsDelivr: <code>actual-css@0.10.0/dist/actual.full.min.css</code>.</span>
+      <span>The textarea owns the form value; Squire owns the document; Actual owns the look.</span>
+    </footer>
+  </main>
+
+  <script type="module">
+    import { defineRichText, isSafeHref } from "../src/index.js";
+    import { createProviders, templates } from "./demo-data.js";
+
+    document.querySelector("#bridge-source").textContent = document.querySelector("#bridge").textContent.trim();
+
+    /** Icons are Nodes: the buttons option never takes HTML strings. */
+    const icon = (name) => () => Object.assign(document.createElement("i"), { className: `ti ti-${name}`, ariaHidden: "true" });
+    const buttons = {
+      bold: { content: icon("bold") },
+      italic: { content: icon("italic") },
+      "bullet-list": { content: icon("list") },
+      "ordered-list": { content: icon("list-numbers") },
+      link: { content: icon("link") },
+      blockquote: { content: icon("quote") },
+      undo: { content: icon("arrow-back-up") },
+      redo: { content: icon("arrow-forward-up") },
+    };
+
+    const renderRow = (title, detail) => {
+      const row = document.createElement("span");
+      row.className = "suggestion-row";
+      row.append(Object.assign(document.createElement("strong"), { textContent: title }));
+      row.append(Object.assign(document.createElement("small"), { textContent: detail }));
+      return row;
+    };
+
+    // requestLink may be async: an Actual <dialog> replaces window.prompt().
+    const dialog = document.querySelector("#link-dialog");
+    const linkInput = document.querySelector("#link-url");
+    const linkField = linkInput.closest(".field");
+    document.querySelector("#link-form").addEventListener("submit", (event) => {
+      if (event.submitter?.value !== "save") return;
+      const value = linkInput.value.trim();
+      const ok = !value || isSafeHref(value);
+      linkInput.setAttribute("aria-invalid", String(!ok));
+      linkField.classList.toggle("danger", !ok);
+      if (!ok) event.preventDefault();
+    });
+    const requestLink = ({ href }) =>
+      new Promise((resolve) => {
+        linkInput.value = href;
+        linkInput.removeAttribute("aria-invalid");
+        linkField.classList.remove("danger");
+        dialog.addEventListener("close", () => resolve(dialog.returnValue === "save" ? linkInput.value : null), { once: true });
+        dialog.returnValue = "";
+        dialog.showModal();
+        linkInput.select();
+      });
+
+    const options = { buttons, requestLink, suggestions: createProviders({ renderRow }) };
+    for (const element of document.querySelectorAll("rich-text.js-actual")) element.options = options;
+    defineRichText();
+
+    /* Team note: validity is mirrored with aria-invalid, as Actual recommends for hidden sources. */
+    const noteForm = document.querySelector("#note-form");
+    const note = document.querySelector("#note");
+    const output = document.querySelector("#note-output");
+    const syncValidity = () => {
+      if (noteForm.classList.contains("was-validated")) note.setAttribute("aria-invalid", String(!note.checkValidity()));
+    };
+    note.addEventListener("input", syncValidity);
+    noteForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      noteForm.classList.add("was-validated");
+      syncValidity();
+      if (!noteForm.checkValidity()) {
+        document.querySelector("#note-editor").richText?.focus();
+        output.textContent = '(invalid: the textarea value is "")';
+        return;
+      }
+      output.textContent = note.value;
+    });
+    noteForm.addEventListener("reset", () => {
+      noteForm.classList.remove("was-validated");
+      note.removeAttribute("aria-invalid");
+      output.textContent = "(nothing submitted yet)";
+    });
+
+    /* Composer */
+    const chatForm = document.querySelector("#chat-form");
+    const chatEditor = document.querySelector("#chat-editor");
+    const chat = document.querySelector("#chat");
+    const chatLog = document.querySelector("#chat-log");
+    const logLine = (text) => {
+      const line = document.createElement("span");
+      line.style.display = "block";
+      line.textContent = text;
+      chatLog.prepend(line);
+    };
+
+    // Capture on the element runs before the editor handles Enter (new paragraph / pick a suggestion).
+    chatEditor.addEventListener(
+      "keydown",
+      (event) => {
+        if (event.key !== "Enter" || event.isComposing || !(event.ctrlKey || event.metaKey)) return;
+        event.preventDefault();
+        chatForm.requestSubmit();
+      },
+      { capture: true },
+    );
+    chatForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const richText = chatEditor.richText;
+      if (!chat.value) return richText?.focus();
+      const mentions = richText.getMentions().map((mention) => mention.label);
+      logLine(`Sent ${chat.value.length} chars of HTML${mentions.length ? `, notifying ${mentions.join(", ")}` : ""}.`);
+      richText.setHTML("");
+      richText.focus();
+    });
+    chat.addEventListener("richtext:invalid", () => logLine("Nothing to send yet."));
+
+    // Chrome actions reuse the suggestion seam: they type the trigger, the provider does the rest.
+    const typeTrigger = (trigger) => {
+      const richText = chatEditor.richText;
+      if (!richText) return;
+      richText.focus();
+      const before = richText.squire.getSelection().startContainer.textContent ?? "";
+      richText.squire.insertPlainText(before && !/\s$/.test(before) ? ` ${trigger}` : trigger, false);
+    };
+    document.querySelector("#chat-snippet").addEventListener("click", () => typeTrigger("/"));
+    document.querySelector("#chat-mention").addEventListener("click", () => typeTrigger("@"));
+    document.querySelector("#chat-attach").addEventListener("click", () =>
+      logLine(`Attachments are owned by the composer (${templates.length} snippets available with /).`),
+    );
+  </script>
+</body>
+</html>
