@@ -16,7 +16,7 @@ editing, paste normalisation and undo/redo. `@lekoala/rich-text` owns the produc
 
 ## Status
 
-0.1 — first release. Every editing behaviour (mentions, selection, paste, IME, focus, form integration) is covered
+0.2 — second release. Every editing behaviour (mentions, selection, paste, IME, focus, form integration) is covered
 by real-browser tests in Chromium, Firefox and WebKit. The API may still change before 1.0.
 
 ## Install
