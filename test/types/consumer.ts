@@ -24,6 +24,8 @@ const options: RichTextOptions = {
 const editor = new RichText(textarea, options);
 editor.getMentions();
 editor.refresh().sync();
+editor.squire.undo();
+editor.squire.insertHTML("<p>x</p>");
 editor.dispose();
 
 const element: RichTextElement = document.createElement("rich-text") as RichTextElement;

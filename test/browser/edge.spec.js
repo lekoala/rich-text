@@ -904,6 +904,29 @@ test.describe("toolbar", () => {
 });
 
 test.describe("lifecycle", () => {
+  test("advanced squire access edits as the user, stays sanitized and is destroyed by dispose()", async ({
+    page,
+  }) => {
+    await open(page);
+    await page.evaluate(() => mount({ html: "<p>Hi</p>" }));
+    await page.evaluate(() => {
+      caretIn("Hi", 2);
+      rt.squire.insertHTML(
+        '<b>bold</b><img src="x" onerror="window.pwned = 1"><a href="javascript:alert(1)">bad</a>',
+      );
+    });
+    await expect(page.locator("#note")).toHaveValue(/<b>bold<\/b>/);
+    await expect(page.locator("#note")).not.toHaveValue(/<img|onerror|javascript:/);
+    expect(await page.evaluate(() => window.pwned)).toBeUndefined();
+    expect(await page.evaluate(() => window.events)).toContain("input");
+
+    await page.evaluate(() => rt.squire.undo());
+    await expect(page.locator("#note")).toHaveValue("<p>Hi</p>");
+
+    await page.evaluate(() => rt.dispose());
+    await expect(page.locator(".rt-shell")).toHaveCount(0);
+  });
+
   test("dispose() leaves no generated surface, popover or label id behind", async ({ page }) => {
     await open(page);
     await page.evaluate(() =>

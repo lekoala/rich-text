@@ -133,7 +133,11 @@ export declare class RichText {
     shell: HTMLDivElement;
     toolbar: HTMLDivElement;
     surface: HTMLDivElement;
-    /** @type {Squire} */
+    /**
+     * Advanced access to the underlying Squire instance (see README "Advanced: Squire access").
+     * Destroyed by dispose().
+     * @type {Squire}
+     */
     squire: Squire;
     suggestionPopup: HTMLDivElement;
     /** @type {MutationObserver} */

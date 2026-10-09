@@ -314,6 +314,20 @@ Events are dispatched on the textarea and bubble: native `input`/`change`, and `
 `richtext:suggestionerror`. The custom
 element dispatches `richtext:ready`.
 
+### Advanced: Squire access
+
+`richText.squire` is the live [Squire](https://github.com/fastmail/Squire) instance (`squire-rte` 2.x), for
+commands the toolbar does not expose (`undo()`, `setSelection()`, `insertHTML()`, `getCursorPosition()`, …). It is a
+supported escape hatch, not the primary API, and is covered by a compatibility test.
+
+- Edits made through Squire are user edits: the textarea is updated and `input` is dispatched (prefer `setHTML()`
+  to replace the content without `input`).
+- `insertHTML()`/`setHTML()` still go through the mandatory sanitizer; the instance does not bypass it.
+- Do not reconfigure or destroy it: `setConfig()`, `destroy()`, `linkRegExp` and the key handlers belong to the
+  component (vocabulary, link policy, mentions). Use `dispose()` instead of `destroy()`.
+- After `dispose()` the instance is destroyed; do not keep references to it.
+- A new Squire major version is a breaking change of this package.
+
 ## Demos
 
 `bun run dev`, then open `http://127.0.0.1:4174/`:

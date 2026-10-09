@@ -181,7 +181,11 @@ export class RichText {
     this._buildToolbar();
     this._copyAccessibility();
 
-    /** @type {Squire} */
+    /**
+     * Advanced access to the underlying Squire instance (see README "Advanced: Squire access").
+     * Destroyed by dispose().
+     * @type {Squire}
+     */
     // The sanitizer is not an option: a replacement would bypass the mandatory policy.
     this.squire = new Squire(this.surface, { blockTag: "P", sanitizeToDOMFragment });
     this._restrictShortcuts();

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- `richText.squire` is documented as an advanced API (Squire 2.x escape hatch), with a compatibility test.
+
 ## 0.2.0
 
 - Form reset from a real click now resets the editor on the first click (the sync ran before the controls were reset).
