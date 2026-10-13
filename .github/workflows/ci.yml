@@ -10,8 +10,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: "1.4.2"
       - run: bun install
       - run: bun run verify
 
@@ -19,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: quality
     container:
-      image: mcr.microsoft.com/playwright:v1.63.0-noble
+      image: mcr.microsoft.com/playwright:v1.64.0-noble
     env:
       HOME: /root
     steps:
@@ -27,8 +25,6 @@ jobs:
       - name: Install unzip
         run: apt-get update && apt-get install -y --no-install-recommends unzip
       - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: "1.4.2"
       - run: bun install
       - run: bun run sync
       - run: bun run test:browser:all
