@@ -154,9 +154,14 @@ Non-mention spans are unwrapped and a mention label is flattened to plain text. 
 and `contenteditable` are stripped from every other element (a stray `contenteditable="true"` would otherwise
 re-enable editing inside a readonly editor).
 
+Mention labels are presentation, not authenticated identity. Pasted HTML and initial values can contain
+structured mentions with any `type` and `id`; validate `type + id` and the author's permission on the server
+before sending notifications or creating backlinks.
+
 Links follow one policy everywhere (initial value, paste, drop, suggestion HTML and the toolbar): relative/hash
 URLs and `http:`, `https:`, `mailto:`, `tel:` only. A link with a missing or refused `href` is unwrapped to its
-text. The toolbar reports a refused URL with `richtext:linkerror`. Squire's automatic linking of typed/pasted URLs
+text. Protocol-relative URLs (`//host/path` and slash/backslash variants) are refused.
+The toolbar reports a refused URL with `richtext:linkerror`. Squire's automatic linking of typed/pasted URLs
 is restricted to the same policy (`http(s)`, `www.`/bare domains, e-mail addresses as `mailto:`); `ftp://` stays
 plain text.
 
@@ -312,7 +317,14 @@ declaratively and exposes the instance as `element.richText` (or `await element.
 Events are dispatched on the textarea and bubble: native `input`/`change`, and `richtext:invalid`,
 `richtext:files`, `richtext:linkerror`, `richtext:mentionselect`, `richtext:mentionremove`,
 `richtext:suggestionerror`. The custom
-element dispatches `richtext:ready`.
+element dispatches `richtext:ready`. A rejected link dialog reports `richtext:linkerror` with `detail.error`;
+stale rejections are ignored. Invalid suggestion insertions report `richtext:suggestionerror` and leave the
+query and rows available for retry.
+
+Changing `options` or the `toolbar` attribute rebuilds the editor and resets undo history. Any pending
+`change` is emitted before teardown; focus and selection are restored in the replacement editor.
+`insertMention()` is a no-op while readonly, disabled, or disposed; `setHTML()` and `sync()` remain available
+for application-owned value replacements.
 
 ### Advanced: Squire access
 

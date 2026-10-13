@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Readonly/disabled editors block editing keys, cut, paste, drop and mention insertion while retaining navigation/copy.
+- Reconfiguration emits pending `change` and restores focus/selection; content replacement resets undo buttons.
+- Link dialog rejections and invalid suggestion mentions report application events without uncaught errors.
+- Sanitization repairs orphan list items and non-item list content, and treats horizontal rules as separators.
+- Protocol-relative links are refused; server validation of mention identities is documented.
+
 - `richText.squire` is documented as an advanced API (Squire 2.x escape hatch), with a compatibility test.
 
 ## 0.2.0

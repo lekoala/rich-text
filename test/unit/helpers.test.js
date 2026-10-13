@@ -50,6 +50,12 @@ describe("isSafeHref", () => {
     expect(isSafeHref("mailto:hello@example.com")).toBe(true);
   });
 
+  test("rejects protocol-relative slash and backslash variants", () => {
+    for (const href of ["//evil.example/x", "/\\evil.example", "\\\\evil.example", "\\/evil.example"]) {
+      expect(isSafeHref(href)).toBe(false);
+    }
+  });
+
   test("rejects executable URLs", () => {
     expect(isSafeHref("javascript:alert(1)")).toBe(false);
     expect(isSafeHref("data:text/html,x")).toBe(false);

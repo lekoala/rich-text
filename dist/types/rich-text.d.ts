@@ -109,6 +109,7 @@ export declare class RichText {
     _dispatchingSource: boolean;
     _settingEditor: boolean;
     _focusValue: string;
+    _focusSession: boolean;
     _canUndo: boolean;
     _canRedo: boolean;
     _composing: boolean;
@@ -206,6 +207,7 @@ export declare class RichText {
     _onSquireEvent(event: Event): void;
     /** @param {Event} event */
     _onShellEvent(event: Event): void;
+    _finishFocusSession(): void;
     /** @param {Event} event */
     _onSourceEvent(event: Event): void;
     /** @param {Event} event */

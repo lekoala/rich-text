@@ -151,9 +151,36 @@ export class RichTextElement extends HTMLElement {
     queueMicrotask(() => {
       this._rebuildQueued = false;
       if (!this.isConnected || !this._richText) return;
-      this._richText.dispose();
+      const previous = this._richText;
+      const active = this.ownerDocument.activeElement;
+      const focused = Boolean(active && previous.shell.contains(active));
+      const command = active instanceof HTMLElement ? active.dataset.command : null;
+      const range = focused ? previous.squire.getSelection() : null;
+      const start = range ? selectionPath(range.startContainer, previous.surface) : null;
+      const end = range ? selectionPath(range.endContainer, previous.surface) : null;
+      const startOffset = range?.startOffset ?? 0;
+      const endOffset = range?.endOffset ?? 0;
+      previous.dispose();
       this._richText = null;
-      this.upgrade();
+      const next = this.upgrade();
+      if (!focused || !next || next.disabled) return;
+      next.focus();
+      if (start && end) {
+        const startNode = selectionNode(start, next.surface);
+        const endNode = selectionNode(end, next.surface);
+        if (startNode && endNode) {
+          const restored = this.ownerDocument.createRange();
+          restored.setStart(startNode, Math.min(startOffset, nodeLength(startNode)));
+          restored.setEnd(endNode, Math.min(endOffset, nodeLength(endNode)));
+          next.squire.setSelection(restored);
+        }
+      }
+      if (command) {
+        const button = [...next.toolbar.querySelectorAll("button")].find(
+          (button) => button.dataset.command === command && !button.disabled,
+        );
+        button?.focus();
+      }
     });
   }
 
@@ -173,4 +200,31 @@ export class RichTextElement extends HTMLElement {
 export function defineRichText() {
   if (!customElements.get("rich-text")) customElements.define("rich-text", RichTextElement);
   return RichTextElement;
+}
+
+/** @param {Node} node @param {Node} root @returns {number[] | null} */
+function selectionPath(node, root) {
+  const path = [];
+  while (node !== root) {
+    const parent = node.parentNode;
+    if (!parent) return null;
+    path.unshift([...parent.childNodes].indexOf(/** @type {ChildNode} */ (node)));
+    node = parent;
+  }
+  return path;
+}
+
+/** @param {number[]} path @param {Node} root @returns {Node | null} */
+function selectionNode(path, root) {
+  let node = root;
+  for (const index of path) {
+    if (!node.childNodes[index]) return null;
+    node = node.childNodes[index];
+  }
+  return node;
+}
+
+/** @param {Node} node */
+function nodeLength(node) {
+  return node.nodeType === 3 ? (node.textContent?.length ?? 0) : node.childNodes.length;
 }

@@ -144,6 +144,7 @@ export class RichText {
     this._dispatchingSource = false;
     this._settingEditor = false;
     this._focusValue = source.value;
+    this._focusSession = false;
     this._canUndo = false;
     this._canRedo = false;
     this._composing = false;
@@ -275,6 +276,7 @@ export class RichText {
    * @returns {this}
    */
   insertMention(mention) {
+    if (this._disposed || !this.editable) return this;
     const range = this.squire.getSelection();
     this._insertMention(mention, range);
     return this;
@@ -283,6 +285,7 @@ export class RichText {
   /** Tear down generated UI and restore the source textarea. Safe to call more than once. */
   dispose() {
     if (this._disposed) return;
+    this._finishFocusSession();
     this._disposed = true;
     clearTimeout(this._resetTimer);
     this._suggestionAbort?.abort();
@@ -315,7 +318,7 @@ export class RichText {
     // Squire listens on its root in the capture phase, so at-target listeners run after it. Capturing on
     // the shell (an ancestor) is the only way to act, and preventDefault(), before Squire handles a key.
     // cut/paste/drop: a selection edge inside a mention would let Squire split it into partial mentions.
-    for (const type of ["keydown", "cut", "paste", "drop"]) {
+    for (const type of ["keydown", "beforeinput", "cut", "paste", "drop"]) {
       this.shell.addEventListener(type, this, { capture: true, signal });
     }
     for (const type of ["mousedown", "click", "focusin", "focusout", "compositionstart", "compositionend"]) {
@@ -392,9 +395,9 @@ export class RichText {
 
   /** @param {Event} event */
   _onSquireEvent(event) {
+    if (this._settingEditor) return;
     switch (event.type) {
       case "input":
-        if (this._settingEditor) return;
         this._syncFromEditor(true);
         if (!this._composing) this._updateSuggestion();
         break;
@@ -427,6 +430,11 @@ export class RichText {
     const target = event.target instanceof Node ? event.target : null;
     const inSurface = Boolean(target && (target === this.surface || this.surface.contains(target)));
     const inToolbar = Boolean(target && this.toolbar.contains(target));
+    if (inSurface && !this.editable && ["beforeinput", "cut", "paste", "drop"].includes(event.type)) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
 
     switch (event.type) {
       case "keydown":
@@ -464,6 +472,7 @@ export class RichText {
         const previous = /** @type {FocusEvent} */ (event).relatedTarget;
         if (!(previous instanceof Node) || !this.shell.contains(previous)) {
           this._focusValue = this.source.value;
+          this._focusSession = true;
         }
         if (inToolbar) this._rememberToolbarButton(target);
         if (!inSurface) this._closeSuggestions();
@@ -475,10 +484,16 @@ export class RichText {
           const active = this.source.ownerDocument.activeElement;
           if (active && this.shell.contains(active)) return;
           this._closeSuggestions();
-          if (this.source.value !== this._focusValue) this._dispatchSource("change");
+          this._finishFocusSession();
         });
         break;
     }
+  }
+
+  _finishFocusSession() {
+    if (!this._focusSession) return;
+    this._focusSession = false;
+    if (this.source.value !== this._focusValue) this._dispatchSource("change");
   }
 
   /** @param {Event} event */
@@ -665,7 +680,17 @@ export class RichText {
     const href = link?.getAttribute("href") ?? "";
     const text = editor.getSelectedText();
     const request = ++this._linkRequest;
-    const next = await this.options.requestLink({ href, text, richText: this });
+    let next;
+    try {
+      next = await this.options.requestLink({ href, text, richText: this });
+    } catch (error) {
+      if (!this._disposed && request === this._linkRequest && this.editable) {
+        this.source.dispatchEvent(
+          new CustomEvent("richtext:linkerror", { bubbles: true, detail: { error } }),
+        );
+      }
+      return;
+    }
 
     // The answer applies to the selection it was asked for, or not at all: it is dropped after dispose, a
     // newer request, a content replacement (setHTML/sync/reset), a readonly/disabled switch, or an edit
@@ -718,10 +743,13 @@ export class RichText {
     clearTimeout(this._resetTimer);
     this._resetPending = false;
     this._linkRequest += 1;
+    this._closeSuggestions();
     this._settingEditor = true;
     try {
-      this.squire.setHTML(String(html ?? ""));
+      this.squire.modifyDocument(() => this.squire.setHTML(String(html ?? "")));
       this._syncFromEditor(false);
+      this._canUndo = this._canRedo = false;
+      this._updateToolbarState();
     } finally {
       this._settingEditor = false;
     }
@@ -889,7 +917,15 @@ export class RichText {
   /** @param {KeyboardEvent} event */
   _onEditorKeydown(event) {
     // keyCode 229: WebKit delivers the IME-confirming Enter after compositionend, with isComposing=false.
-    if (event.isComposing || event.keyCode === 229 || !this.editable) return;
+    if (!this.editable) {
+      const copyOrSelect =
+        (event.ctrlKey || event.metaKey) && !event.altKey && ["a", "c"].includes(event.key.toLowerCase());
+      if (!NAVIGATION_KEYS.has(event.key) && !copyOrSelect) event.preventDefault();
+      // Keep native navigation/copy, but do not let Squire handle any readonly key.
+      event.stopPropagation();
+      return;
+    }
+    if (event.isComposing || event.keyCode === 229) return;
 
     if (this._suggestionItems.length) {
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -1157,17 +1193,31 @@ export class RichText {
 
     /** @type {SuggestionInsert} */
     let insertion;
-    if (provider.insert) insertion = provider.insert(item, context);
-    else if (provider.kind === "mention") {
-      const label = suggestionLabel(provider, item);
-      insertion = {
-        type: "mention",
-        id: provider.getId?.(item) ?? String(item?.id ?? ""),
-        label: label.startsWith(provider.trigger) ? label : `${provider.trigger}${label}`,
-        mentionType: provider.mentionType ?? "mention",
-      };
-    } else {
-      insertion = { type: "text", text: suggestionLabel(provider, item) };
+    try {
+      if (provider.insert) insertion = provider.insert(item, context);
+      else if (provider.kind === "mention") {
+        const label = suggestionLabel(provider, item);
+        insertion = {
+          type: "mention",
+          id: provider.getId?.(item) ?? String(item?.id ?? ""),
+          label: label.startsWith(provider.trigger) ? label : `${provider.trigger}${label}`,
+          mentionType: provider.mentionType ?? "mention",
+        };
+      } else {
+        insertion = { type: "text", text: suggestionLabel(provider, item) };
+      }
+
+      if (
+        insertion.type === "mention" &&
+        (!String(insertion.id ?? "").trim() || !String(insertion.label ?? "").trim())
+      ) {
+        throw new TypeError("A mention requires non-empty id and label values.");
+      }
+    } catch (error) {
+      this.source.dispatchEvent(
+        new CustomEvent("richtext:suggestionerror", { bubbles: true, detail: { error, provider } }),
+      );
+      return;
     }
 
     // Close first: the insertion below changes the caret, which would otherwise start a new search.

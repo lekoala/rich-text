@@ -103,7 +103,7 @@ export function matchSuggestionText(textBeforeCaret, triggers) {
  */
 export function isSafeHref(href) {
   const value = String(href ?? "").trim();
-  if (!value) return false;
+  if (!value || /^[\\/]{2}/.test(value)) return false;
   if (value.startsWith("#") || value.startsWith("/") || value.startsWith("./") || value.startsWith("../")) {
     return true;
   }

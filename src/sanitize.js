@@ -59,7 +59,44 @@ function normalizeMarkup(root) {
     if (blocks.length === 1 && blocks[0].localName === "p") blocks[0].replaceWith(...blocks[0].childNodes);
   }
 
+  // Horizontal rules separate content without introducing unsupported empty blocks.
+  for (const rule of root.querySelectorAll("hr")) rule.replaceWith(doc.createElement("br"));
+  normalizeLists(root);
   wrapLooseInline(root);
+}
+
+/** Ensure lists contain items and adjacent orphan items share a list. @param {HTMLElement} root */
+function normalizeLists(root) {
+  const doc = root.ownerDocument;
+  for (const item of [...root.querySelectorAll("li")]) {
+    if (item.parentElement?.matches("ul, ol")) continue;
+    const previous = item.previousSibling;
+    const list =
+      previous?.nodeType === 1 && /** @type {Element} */ (previous).matches("ul")
+        ? previous
+        : doc.createElement("ul");
+    if (!list.parentNode) item.before(list);
+    list.appendChild(item);
+  }
+  for (const list of root.querySelectorAll("ul, ol")) {
+    /** @type {HTMLLIElement | null} */
+    let item = null;
+    for (const node of [...list.childNodes]) {
+      if (node.nodeName === "LI") {
+        item = null;
+      } else {
+        if (!item) {
+          if (node.nodeType === 3 && !node.textContent?.trim()) {
+            node.remove();
+            continue;
+          }
+          item = doc.createElement("li");
+          node.before(item);
+        }
+        item.append(node);
+      }
+    }
+  }
 }
 
 /**

@@ -2495,7 +2495,7 @@
   }
   function isSafeHref(href) {
     const value = String(href ?? "").trim();
-    if (!value)
+    if (!value || /^[\\/]{2}/.test(value))
       return false;
     if (value.startsWith("#") || value.startsWith("/") || value.startsWith("./") || value.startsWith("../")) {
       return true;
@@ -4689,7 +4689,40 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       if (blocks.length === 1 && blocks[0].localName === "p")
         blocks[0].replaceWith(...blocks[0].childNodes);
     }
+    for (const rule of root.querySelectorAll("hr"))
+      rule.replaceWith(doc.createElement("br"));
+    normalizeLists(root);
     wrapLooseInline(root);
+  }
+  function normalizeLists(root) {
+    const doc = root.ownerDocument;
+    for (const item of [...root.querySelectorAll("li")]) {
+      if (item.parentElement?.matches("ul, ol"))
+        continue;
+      const previous = item.previousSibling;
+      const list = previous?.nodeType === 1 && previous.matches("ul") ? previous : doc.createElement("ul");
+      if (!list.parentNode)
+        item.before(list);
+      list.appendChild(item);
+    }
+    for (const list of root.querySelectorAll("ul, ol")) {
+      let item = null;
+      for (const node of [...list.childNodes]) {
+        if (node.nodeName === "LI") {
+          item = null;
+        } else {
+          if (!item) {
+            if (node.nodeType === 3 && !node.textContent?.trim()) {
+              node.remove();
+              continue;
+            }
+            item = doc.createElement("li");
+            node.before(item);
+          }
+          item.append(node);
+        }
+      }
+    }
   }
   function wrapLooseInline(root) {
     const doc = root.ownerDocument;
@@ -4872,6 +4905,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       this._dispatchingSource = false;
       this._settingEditor = false;
       this._focusValue = source.value;
+      this._focusSession = false;
       this._canUndo = false;
       this._canRedo = false;
       this._composing = false;
@@ -4952,6 +4986,8 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       return mentions;
     }
     insertMention(mention) {
+      if (this._disposed || !this.editable)
+        return this;
       const range = this.squire.getSelection();
       this._insertMention(mention, range);
       return this;
@@ -4959,6 +4995,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     dispose() {
       if (this._disposed)
         return;
+      this._finishFocusSession();
       this._disposed = true;
       clearTimeout(this._resetTimer);
       this._suggestionAbort?.abort();
@@ -4985,7 +5022,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       for (const type of ["input", "pathChange", "cursor", "select", "undoStateChange", "pasteImage"]) {
         this.squire.addEventListener(type, this);
       }
-      for (const type of ["keydown", "cut", "paste", "drop"]) {
+      for (const type of ["keydown", "beforeinput", "cut", "paste", "drop"]) {
         this.shell.addEventListener(type, this, { capture: true, signal });
       }
       for (const type of ["mousedown", "click", "focusin", "focusout", "compositionstart", "compositionend"]) {
@@ -5055,10 +5092,10 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         this._onLabelClick(event);
     }
     _onSquireEvent(event) {
+      if (this._settingEditor)
+        return;
       switch (event.type) {
         case "input":
-          if (this._settingEditor)
-            return;
           this._syncFromEditor(true);
           if (!this._composing)
             this._updateSuggestion();
@@ -5091,6 +5128,11 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const target = event.target instanceof Node ? event.target : null;
       const inSurface = Boolean(target && (target === this.surface || this.surface.contains(target)));
       const inToolbar = Boolean(target && this.toolbar.contains(target));
+      if (inSurface && !this.editable && ["beforeinput", "cut", "paste", "drop"].includes(event.type)) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
       switch (event.type) {
         case "keydown":
           if (inSurface)
@@ -5133,6 +5175,7 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
           const previous = event.relatedTarget;
           if (!(previous instanceof Node) || !this.shell.contains(previous)) {
             this._focusValue = this.source.value;
+            this._focusSession = true;
           }
           if (inToolbar)
             this._rememberToolbarButton(target);
@@ -5148,11 +5191,17 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
             if (active && this.shell.contains(active))
               return;
             this._closeSuggestions();
-            if (this.source.value !== this._focusValue)
-              this._dispatchSource("change");
+            this._finishFocusSession();
           });
           break;
       }
+    }
+    _finishFocusSession() {
+      if (!this._focusSession)
+        return;
+      this._focusSession = false;
+      if (this.source.value !== this._focusValue)
+        this._dispatchSource("change");
     }
     _onSourceEvent(event) {
       if (event.type !== "invalid") {
@@ -5321,7 +5370,15 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       const href = link?.getAttribute("href") ?? "";
       const text = editor.getSelectedText();
       const request = ++this._linkRequest;
-      const next = await this.options.requestLink({ href, text, richText: this });
+      let next;
+      try {
+        next = await this.options.requestLink({ href, text, richText: this });
+      } catch (error) {
+        if (!this._disposed && request === this._linkRequest && this.editable) {
+          this.source.dispatchEvent(new CustomEvent("richtext:linkerror", { bubbles: true, detail: { error } }));
+        }
+        return;
+      }
       if (next == null || this._disposed || request !== this._linkRequest || !this.editable)
         return;
       if (range.startContainer !== startContainer || range.endContainer !== endContainer)
@@ -5368,10 +5425,13 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       clearTimeout(this._resetTimer);
       this._resetPending = false;
       this._linkRequest += 1;
+      this._closeSuggestions();
       this._settingEditor = true;
       try {
-        this.squire.setHTML(String(html ?? ""));
+        this.squire.modifyDocument(() => this.squire.setHTML(String(html ?? "")));
         this._syncFromEditor(false);
+        this._canUndo = this._canRedo = false;
+        this._updateToolbarState();
       } finally {
         this._settingEditor = false;
       }
@@ -5501,7 +5561,14 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       return popup;
     }
     _onEditorKeydown(event) {
-      if (event.isComposing || event.keyCode === 229 || !this.editable)
+      if (!this.editable) {
+        const copyOrSelect = (event.ctrlKey || event.metaKey) && !event.altKey && ["a", "c"].includes(event.key.toLowerCase());
+        if (!NAVIGATION_KEYS.has(event.key) && !copyOrSelect)
+          event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      if (event.isComposing || event.keyCode === 229)
         return;
       if (this._suggestionItems.length) {
         if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -5726,18 +5793,26 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
       if (!provider || !context || item === undefined || !this.editable)
         return;
       let insertion;
-      if (provider.insert)
-        insertion = provider.insert(item, context);
-      else if (provider.kind === "mention") {
-        const label = suggestionLabel(provider, item);
-        insertion = {
-          type: "mention",
-          id: provider.getId?.(item) ?? String(item?.id ?? ""),
-          label: label.startsWith(provider.trigger) ? label : `${provider.trigger}${label}`,
-          mentionType: provider.mentionType ?? "mention"
-        };
-      } else {
-        insertion = { type: "text", text: suggestionLabel(provider, item) };
+      try {
+        if (provider.insert)
+          insertion = provider.insert(item, context);
+        else if (provider.kind === "mention") {
+          const label = suggestionLabel(provider, item);
+          insertion = {
+            type: "mention",
+            id: provider.getId?.(item) ?? String(item?.id ?? ""),
+            label: label.startsWith(provider.trigger) ? label : `${provider.trigger}${label}`,
+            mentionType: provider.mentionType ?? "mention"
+          };
+        } else {
+          insertion = { type: "text", text: suggestionLabel(provider, item) };
+        }
+        if (insertion.type === "mention" && (!String(insertion.id ?? "").trim() || !String(insertion.label ?? "").trim())) {
+          throw new TypeError("A mention requires non-empty id and label values.");
+        }
+      } catch (error) {
+        this.source.dispatchEvent(new CustomEvent("richtext:suggestionerror", { bubbles: true, detail: { error, provider } }));
+        return;
       }
       this._closeSuggestions();
       this.squire.setSelection(context.range);
@@ -5977,9 +6052,35 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
         this._rebuildQueued = false;
         if (!this.isConnected || !this._richText)
           return;
-        this._richText.dispose();
+        const previous = this._richText;
+        const active = this.ownerDocument.activeElement;
+        const focused = Boolean(active && previous.shell.contains(active));
+        const command = active instanceof HTMLElement ? active.dataset.command : null;
+        const range = focused ? previous.squire.getSelection() : null;
+        const start = range ? selectionPath(range.startContainer, previous.surface) : null;
+        const end = range ? selectionPath(range.endContainer, previous.surface) : null;
+        const startOffset = range?.startOffset ?? 0;
+        const endOffset = range?.endOffset ?? 0;
+        previous.dispose();
         this._richText = null;
-        this.upgrade();
+        const next = this.upgrade();
+        if (!focused || !next || next.disabled)
+          return;
+        next.focus();
+        if (start && end) {
+          const startNode = selectionNode(start, next.surface);
+          const endNode = selectionNode(end, next.surface);
+          if (startNode && endNode) {
+            const restored = this.ownerDocument.createRange();
+            restored.setStart(startNode, Math.min(startOffset, nodeLength(startNode)));
+            restored.setEnd(endNode, Math.min(endOffset, nodeLength(endNode)));
+            next.squire.setSelection(restored);
+          }
+        }
+        if (command) {
+          const button = [...next.toolbar.querySelectorAll("button")].find((button) => button.dataset.command === command && !button.disabled);
+          button?.focus();
+        }
       });
     }
     #upgradeProperty(name) {
@@ -5994,6 +6095,29 @@ In order to be iterable, non-array objects must have a [Symbol.iterator]() metho
     if (!customElements.get("rich-text"))
       customElements.define("rich-text", RichTextElement);
     return RichTextElement;
+  }
+  function selectionPath(node, root) {
+    const path = [];
+    while (node !== root) {
+      const parent = node.parentNode;
+      if (!parent)
+        return null;
+      path.unshift([...parent.childNodes].indexOf(node));
+      node = parent;
+    }
+    return path;
+  }
+  function selectionNode(path, root) {
+    let node = root;
+    for (const index of path) {
+      if (!node.childNodes[index])
+        return null;
+      node = node.childNodes[index];
+    }
+    return node;
+  }
+  function nodeLength(node) {
+    return node.nodeType === 3 ? node.textContent?.length ?? 0 : node.childNodes.length;
   }
 
   // src/define.js
